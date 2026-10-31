@@ -50,6 +50,13 @@ CLIENT_SPLIT_USD, CLIENT_SPLIT_CARD = range(11, 13)
 CLIENT_DELETE_CONFIRM = 18
 CLIENT_EXPENSE_ACCOUNT = 19
 UNDO_LIST, UNDO_CONFIRM, OTHER_USD = range(20, 23)
+OBJECT_NAME, OBJECT_MENU, OBJECT_AMOUNT, OBJECT_ACCOUNT = range(23, 27)
+ADD_OBJECT_BUTTON = "➕ Obyekt qo'shish"
+OBJECT_REPORT_BUTTON = "📒 Obyekt hisobi"
+CLIENT_BACK_BUTTON = "⬅️ Mijozga qaytish"
+OBJECT_PREV = "⬅️ Oldingi obyektlar"
+OBJECT_NEXT = "➡️ Keyingi obyektlar"
+OBJECT_CATEGORIES = ("Mdf", "Alifrem", "Kraska", "Furnita", "Oyna", "Yo'l-xarajati", "Bambuk", "Tosh")
 UNDO_BUTTON = "↩️ Tranzaksiyani qaytarish"
 UNDO_CONFIRM_BUTTON = "✅ Qaytarish"
 UNDO_PREV = "⬅️ Oldingi yozuvlar"
@@ -137,7 +144,7 @@ STATISTICS_KEYBOARD = ReplyKeyboardMarkup(
 )
 
 CLIENT_KEYBOARD = ReplyKeyboardMarkup(
-    [[CLIENT_INCOME_BUTTON], [CLIENT_CASH_BUTTON],
+    [[ADD_OBJECT_BUTTON], [CLIENT_INCOME_BUTTON],
      [CLIENT_REPORT_BUTTON], [DELETE_CLIENT_BUTTON], [CLIENTS_BUTTON, BACK_BUTTON]],
     resize_keyboard=True
 )
@@ -156,6 +163,16 @@ BOSS_KEYBOARD = ReplyKeyboardMarkup(
 )
 BOSS_CLIENT_KEYBOARD = ReplyKeyboardMarkup(
     [[CLIENT_REPORT_BUTTON], [CLIENTS_BUTTON, BACK_BUTTON]], resize_keyboard=True
+)
+
+OBJECT_KEYBOARD = ReplyKeyboardMarkup(
+    [list(OBJECT_CATEGORIES[index:index + 2]) for index in range(0, len(OBJECT_CATEGORIES), 2)]
+    + [[OBJECT_REPORT_BUTTON], [CLIENT_BACK_BUTTON, CLIENTS_BUTTON], [BACK_BUTTON]],
+    resize_keyboard=True,
+)
+BOSS_OBJECT_KEYBOARD = ReplyKeyboardMarkup(
+    [[OBJECT_REPORT_BUTTON], [CLIENT_BACK_BUTTON, CLIENTS_BUTTON], [BACK_BUTTON]],
+    resize_keyboard=True,
 )
 
 
@@ -197,6 +214,18 @@ def init_db():
         if "client_id" not in columns:
             conn.execute("ALTER TABLE transactions ADD COLUMN client_id INTEGER REFERENCES clients(id)")
         conn.execute("CREATE INDEX IF NOT EXISTS transactions_client ON transactions(client_id, created_at, id)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS client_objects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_id INTEGER NOT NULL REFERENCES clients(id),
+            name TEXT NOT NULL, name_key TEXT NOT NULL,
+            UNIQUE(client_id, name_key)
+        )""")
+        conn.execute("""CREATE TABLE IF NOT EXISTS object_expenses (
+            transaction_id INTEGER PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,
+            object_id INTEGER NOT NULL REFERENCES client_objects(id),
+            category TEXT NOT NULL
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS expenses_object ON object_expenses(object_id, transaction_id)")
         conn.execute("CREATE TABLE IF NOT EXISTS employees (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE)")
         conn.execute("""CREATE TABLE IF NOT EXISTS employee_payments (
             transaction_id INTEGER PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,
@@ -280,6 +309,53 @@ def archive_client(client_id):
         conn.execute("UPDATE clients SET archived = 1 WHERE id = ?", (client_id,))
 
 
+def add_client_object(client_id, name):
+    name = " ".join(name.split())
+    if not name or len(name) > 80 or not any(char.isalnum() for char in name):
+        raise ValueError("Obyekt nomi 1–80 belgi bo'lsin")
+    with closing(sqlite3.connect(DB_PATH)) as conn, conn:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("BEGIN IMMEDIATE")
+        if not conn.execute("SELECT 1 FROM clients WHERE id = ? AND archived = 0", (client_id,)).fetchone():
+            raise ValueError("Mijoz topilmadi")
+        conn.execute("INSERT INTO client_objects(client_id, name, name_key) VALUES (?, ?, ?) "
+                     "ON CONFLICT(client_id, name_key) DO NOTHING", (client_id, name, name.casefold()))
+        return conn.execute("SELECT id, name FROM client_objects WHERE client_id = ? AND name_key = ?",
+                            (client_id, name.casefold())).fetchone()
+
+
+def get_client_object(client_id, object_id):
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        return conn.execute("SELECT o.id, o.name FROM client_objects o JOIN clients c ON c.id = o.client_id "
+                            "WHERE o.id = ? AND o.client_id = ? AND c.archived = 0", (object_id, client_id)).fetchone()
+
+
+def get_client_objects(client_id, page=0):
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        return conn.execute("SELECT id, name FROM client_objects WHERE client_id = ? "
+                            "ORDER BY name_key, id LIMIT ? OFFSET ?",
+                            (client_id, CLIENT_PAGE_SIZE + 1, max(0, page) * CLIENT_PAGE_SIZE)).fetchall()
+
+
+def link_object_expense(conn, transaction_id, client_id, object_id, category):
+    if category not in OBJECT_CATEGORIES:
+        raise ValueError("Xarajat turini ro'yxatdan tanlang")
+    if not conn.execute("SELECT 1 FROM client_objects o JOIN clients c ON c.id = o.client_id "
+                        "WHERE o.id = ? AND o.client_id = ? AND c.archived = 0", (object_id, client_id)).fetchone():
+        raise ValueError("Obyekt ushbu mijozga tegishli emas")
+    conn.execute("INSERT INTO object_expenses(transaction_id, object_id, category) VALUES (?, ?, ?)",
+                 (transaction_id, object_id, category))
+
+
+def get_object_expenses(client_id, object_id):
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        return conn.execute("SELECT t.created_at, p.category, t.currency, -t.amount, t.account "
+                            "FROM transactions t JOIN object_expenses p ON p.transaction_id = t.id "
+                            "JOIN client_objects o ON o.id = p.object_id "
+                            "WHERE o.client_id = ? AND o.id = ? ORDER BY t.created_at, t.id",
+                            (client_id, object_id)).fetchall()
+
+
 def get_statement(client_id=None):
     condition = "client_id = ? AND kind IN ('income', 'expense')" if client_id is not None else "client_id IS NULL AND kind = 'expense'"
     params = (client_id,) if client_id is not None else ()
@@ -300,7 +376,8 @@ def now_text():
     return datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def add_transaction(kind, currency, amount, note="", actor_id=None, account="cash", client_id=None):
+def add_transaction(kind, currency, amount, note="", actor_id=None, account="cash", client_id=None,
+                    object_id=None, category=None):
     if account not in ("cash", "card") or (account == "card" and currency != "UZS"):
         raise ValueError("Noto'g'ri hisob yoki valyuta")
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
@@ -310,7 +387,7 @@ def add_transaction(kind, currency, amount, note="", actor_id=None, account="cas
         if amount < 0:
             conn.execute("BEGIN IMMEDIATE")
             require_funds(conn, currency, account, -amount)
-        conn.execute(
+        cursor = conn.execute(
             """
             INSERT INTO transactions
             (created_at, kind, currency, amount, note, actor_id, account, client_id)
@@ -327,6 +404,10 @@ def add_transaction(kind, currency, amount, note="", actor_id=None, account="cas
                 client_id
             )
         )
+        if object_id is not None:
+            if kind != "expense" or amount >= 0:
+                raise ValueError("Obyektga faqat xarajat yoziladi")
+            link_object_expense(conn, cursor.lastrowid, client_id, object_id, category)
 
 
 def add_split_client_income(client_id, usd_cents, card_amount, actor_id=None):
@@ -370,7 +451,7 @@ def card_total(amount):
     return amount + (amount + 99) // 100
 
 
-def add_card_expense(amount, note, actor_id=None, client_id=None):
+def add_card_expense(amount, note, actor_id=None, client_id=None, object_id=None, category=None):
     if amount <= 0:
         raise ValueError("Summa musbat bo'lishi kerak")
     amount = card_total(amount)
@@ -378,12 +459,14 @@ def add_card_expense(amount, note, actor_id=None, client_id=None):
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("BEGIN IMMEDIATE")
         require_funds(conn, "UZS", "card", amount)
-        conn.execute(
+        cursor = conn.execute(
             "INSERT INTO transactions "
             "(created_at, kind, currency, amount, note, actor_id, account, client_id) "
             "VALUES (?, 'expense', 'UZS', ?, ?, ?, 'card', ?)",
             (now_text(), -amount, note, actor_id, client_id)
         )
+        if object_id is not None:
+            link_object_expense(conn, cursor.lastrowid, client_id, object_id, category)
     return amount
 
 
@@ -446,6 +529,10 @@ def undo_rows(conn, transaction_id):
     for item in rows:
         employee = conn.execute("SELECT employee_id FROM employee_payments WHERE transaction_id = ?", (item["id"],)).fetchone()
         item["employee_id"] = employee[0] if employee else None
+        obj = conn.execute("SELECT object_id, category FROM object_expenses WHERE transaction_id = ?",
+                           (item["id"],)).fetchone()
+        item["object_id"] = obj[0] if obj else None
+        item["category"] = obj[1] if obj else None
         client = conn.execute("SELECT name FROM clients WHERE id = ?", (item["client_id"],)).fetchone()
         employee = conn.execute("SELECT name FROM employees WHERE id = ?", (item["employee_id"],)).fetchone()
         item["owner"] = client[0] if client else employee[0] if employee else ""
@@ -1007,7 +1094,29 @@ def active_client(context):
 
 def scope_keyboard(context):
     scope = context.chat_data.get("expense_scope")
-    return CLIENT_KEYBOARD if scope == "client" else OTHER_KEYBOARD if scope == "other" else MAIN_KEYBOARD
+    if scope == "client":
+        if context.chat_data.get("object_id") is not None:
+            return OBJECT_KEYBOARD
+        return client_objects_keyboard(context.chat_data)
+    return OTHER_KEYBOARD if scope == "other" else MAIN_KEYBOARD
+
+
+def client_objects_keyboard(session, cashier=True, page=None):
+    page = max(0, session.get("object_page", 0) if page is None else page)
+    rows = get_client_objects(session.get("client_id"), page)
+    if not rows and page:
+        page = 0
+        rows = get_client_objects(session.get("client_id"))
+    choices = {f"🏠 {name}": object_id for object_id, name in rows[:CLIENT_PAGE_SIZE]}
+    session.update(object_choices=choices, object_page=page)
+    labels = list(choices)
+    keyboard = [labels[index:index + 2] for index in range(0, len(labels), 2)]
+    navigation = ([OBJECT_PREV] if page else []) + ([OBJECT_NEXT] if len(rows) > CLIENT_PAGE_SIZE else [])
+    if navigation:
+        keyboard.append(navigation)
+    base = CLIENT_KEYBOARD if cashier else BOSS_CLIENT_KEYBOARD
+    keyboard.extend(base.keyboard)
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 
 def format_money(amount, currency):
@@ -1041,7 +1150,8 @@ async def show_clients(update, context, page=0):
     session = client_view_session(update, context)
     session.clear()
     session.update(client_page=page, client_choices=choices)
-    keyboard = [[label] for label in choices]
+    labels = list(choices)
+    keyboard = [labels[index:index + 2] for index in range(0, len(labels), 2)]
     navigation = []
     if page:
         navigation.append(PREV_CLIENTS_BUTTON)
@@ -1108,7 +1218,7 @@ async def show_client(update, context, client):
     _, totals = get_statement(client[0])
     await update.message.reply_text(
         f"👤 MIJOZ: {client[1]}\n\n{client_totals_text(totals)}",
-        reply_markup=CLIENT_KEYBOARD if is_cashier(update) else BOSS_CLIENT_KEYBOARD
+        reply_markup=client_objects_keyboard(session, is_cashier(update))
     )
     return CLIENT_MENU
 
@@ -1121,11 +1231,25 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if client is None:
         return await clients_start(update, context)
     text = update.message.text
+    if text in (OBJECT_PREV, OBJECT_NEXT):
+        page = max(0, session.get("object_page", 0) + (1 if text == OBJECT_NEXT else -1))
+        await update.message.reply_text(f"👤 Mijoz: {client[1]}\nObyektni tanlang:",
+                                       reply_markup=client_objects_keyboard(session, is_cashier(update), page))
+        return CLIENT_MENU
+    object_id = session.get("object_choices", {}).get(text)
+    if object_id is not None:
+        obj = get_client_object(client[0], object_id)
+        if obj:
+            return await show_object(update, context, client, obj)
+        return await show_client(update, context, client)
     if not is_cashier(update):
         if text == CLIENT_REPORT_BUTTON:
             return await show_statement(update, context, client)
         await reject_if_not_cashier(update)
         return CLIENT_MENU
+    if text == ADD_OBJECT_BUTTON:
+        await update.message.reply_text("Obyekt nomini yozing:", reply_markup=CANCEL_KEYBOARD)
+        return OBJECT_NAME
     if text == DELETE_CLIENT_BUTTON:
         await update.message.reply_text(
             f"{client[1]} ro'yxatdan o'chirilsinmi?\nKirim-xarajatlar va balans saqlanadi.",
@@ -1141,6 +1265,159 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text in (CLIENT_CASH_BUTTON, CLIENT_CARD_BUTTON):
         return await scoped_expense_prompt(update, context, text == CLIENT_CARD_BUTTON)
     return await record_expense(update, context, account="cash")
+
+
+async def object_create(update, context):
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    client = active_client(context)
+    if client is None:
+        return await clients_start(update, context)
+    try:
+        obj = add_client_object(client[0], update.message.text)
+    except ValueError as exc:
+        await update.message.reply_text(f"❌ {exc}", reply_markup=CANCEL_KEYBOARD)
+        return OBJECT_NAME
+    except (sqlite3.Error, OSError):
+        await update.message.reply_text("❌ Obyekt saqlanmadi. Qayta urinib ko'ring.", reply_markup=CANCEL_KEYBOARD)
+        return OBJECT_NAME
+    return await show_object(update, context, client, obj)
+
+
+async def show_object(update, context, client, obj):
+    session = client_view_session(update, context)
+    session.clear()
+    session.update(expense_scope="client", client_id=client[0], object_id=obj[0])
+    rows = get_object_expenses(client[0], obj[0])
+    totals = {currency: sum(amount for _, _, c, amount, _ in rows if c == currency) for currency in ("UZS", "USD")}
+    await update.message.reply_text(
+        f"👤 Mijoz: {client[1]}\n🏠 Obyekt: {obj[1]}\n\n"
+        f"Ishlatilgan: {format_money(totals['UZS'], 'UZS')}\n"
+        f"Ishlatilgan: {format_money(totals['USD'], 'USD')}\n\nXarajat turini tanlang:",
+        reply_markup=OBJECT_KEYBOARD if is_cashier(update) else BOSS_OBJECT_KEYBOARD,
+    )
+    return OBJECT_MENU
+
+
+async def object_menu(update, context):
+    if not await report_access(update):
+        return ConversationHandler.END
+    session = client_view_session(update, context)
+    client = get_client(session.get("client_id"))
+    if client is None:
+        return await clients_start(update, context)
+    obj = get_client_object(client[0], session.get("object_id"))
+    if obj is None or update.message.text == CLIENT_BACK_BUTTON:
+        return await show_client(update, context, client)
+    if update.message.text == OBJECT_REPORT_BUTTON:
+        rows = get_object_expenses(client[0], obj[0])
+        lines = [f"👤 Mijoz: {client[1]}", f"🏠 OBYEKT HISOBI: {obj[1]}", ""]
+        totals = {category: {"UZS": 0, "USD": 0} for category in OBJECT_CATEGORIES}
+        for index, (created_at, category, currency, amount, account) in enumerate(rows, 1):
+            totals[category][currency] += amount
+            source = "karta" if account == "card" else "naqd"
+            lines.append(f"{index}. {category} — {format_money(amount, currency)} ({source})\n{created_at[:16]}")
+        if not rows:
+            lines.append("Hozircha xarajat yo'q.")
+        summary = "XARAJAT TURLARI BO'YICHA\n" + "\n".join(
+            f"{category}: {format_money(amounts['UZS'], 'UZS')}, {format_money(amounts['USD'], 'USD')}"
+            for category, amounts in totals.items()
+        )
+        summary += "\n\nJAMI XARAJAT\n" + "\n".join(
+            format_money(sum(amounts[currency] for amounts in totals.values()), currency) for currency in ("UZS", "USD")
+        )
+        await reply_report(update, "\n".join(lines), summary,
+                           OBJECT_KEYBOARD if is_cashier(update) else BOSS_OBJECT_KEYBOARD)
+        return OBJECT_MENU
+    if await reject_if_not_cashier(update):
+        return OBJECT_MENU
+    if update.message.text not in OBJECT_CATEGORIES:
+        await update.message.reply_text("Xarajat turini tugmalardan tanlang.", reply_markup=OBJECT_KEYBOARD)
+        return OBJECT_MENU
+    session["object_category"] = update.message.text
+    await update.message.reply_text(f"{obj[1]} — {update.message.text}\nSummani yozing:", reply_markup=CANCEL_KEYBOARD)
+    return OBJECT_AMOUNT
+
+
+async def object_amount(update, context):
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    session = context.chat_data
+    client = active_client(context)
+    if client is None:
+        return await clients_start(update, context)
+    if not get_client_object(client[0], session.get("object_id")) or session.get("object_category") not in OBJECT_CATEGORIES:
+        return await show_client(update, context, client)
+    text = update.message.text.strip()
+    raw = text[:-1].rstrip() if text.endswith("$") else text
+    try:
+        if not re.fullmatch(r"[0-9][0-9 .,]*", raw):
+            raise ValueError
+        # Hisob tanlanguncha summani pulga aylantirmaymiz.
+        try:
+            parse_usd(raw)
+        except (ValueError, InvalidOperation):
+            if text.endswith("$") or "." in raw or "," in raw:
+                raise
+            parse_uzs(raw)
+    except (ValueError, InvalidOperation):
+        await update.message.reply_text("❌ Summani to'g'ri yozing.", reply_markup=CANCEL_KEYBOARD)
+        return OBJECT_AMOUNT
+    session["object_amount"] = raw
+    await update.message.reply_text("Qaysi hisobdan?", reply_markup=CLIENT_EXPENSE_KEYBOARD)
+    return OBJECT_ACCOUNT
+
+
+async def object_expense_account(update, context):
+    if await reject_if_not_cashier(update):
+        return ConversationHandler.END
+    session = context.chat_data
+    client = active_client(context)
+    if client is None:
+        return await clients_start(update, context)
+    obj = get_client_object(client[0], session.get("object_id"))
+    category, raw = session.get("object_category"), session.get("object_amount")
+    if obj is None or category not in OBJECT_CATEGORIES or raw is None:
+        return await show_client(update, context, client)
+    choices = {"💵 Naqd so'm": ("UZS", "cash"), CARD_BUTTON: ("UZS", "card"), "🇺🇸 Dollar": ("USD", "cash")}
+    if update.message.text not in choices:
+        await update.message.reply_text("Hisobni tugmalardan tanlang.", reply_markup=CLIENT_EXPENSE_KEYBOARD)
+        return OBJECT_ACCOUNT
+    currency, account = choices[update.message.text]
+    try:
+        if currency == "UZS" and re.search(r"[.,][0-9]{1,2}$", raw):
+            raise ValueError
+        amount = parse_usd(raw) if currency == "USD" else parse_uzs(raw)
+        if account == "card" and card_total(amount) > 9223372036854775807:
+            raise ValueError
+    except (ValueError, InvalidOperation):
+        await update.message.reply_text("❌ Summa bu hisobga mos emas.", reply_markup=CLIENT_EXPENSE_KEYBOARD)
+        return OBJECT_ACCOUNT
+    note = f"Obyekt: {obj[1]}\n{category}"
+    try:
+        if account == "card":
+            amount = add_card_expense(amount, note, update.effective_user.id, client_id=client[0],
+                                      object_id=obj[0], category=category)
+        else:
+            add_transaction("expense", currency, -amount, note, update.effective_user.id, client_id=client[0],
+                            object_id=obj[0], category=category)
+    except InsufficientFunds:
+        await update.message.reply_text("❌ Balansda pul yetarli emas.", reply_markup=CLIENT_EXPENSE_KEYBOARD)
+        return OBJECT_ACCOUNT
+    except (sqlite3.Error, OSError, ValueError):
+        await update.message.reply_text("❌ Xarajat saqlanmadi. Qayta urinib ko'ring.", reply_markup=CLIENT_EXPENSE_KEYBOARD)
+        return OBJECT_ACCOUNT
+    session.pop("object_amount", None)
+    session.pop("object_category", None)
+    await update.message.reply_text(
+        f"✅ Xarajat yozildi\n👤 Mijoz: {client[1]}\n🏠 Obyekt: {obj[1]}\n"
+        f"{category}: {format_money(amount, currency)}\n"
+        f"{'Karta' if account == 'card' else 'Naqd'} qoldiq: {format_money(get_balance(currency, account), currency)}",
+        reply_markup=OBJECT_KEYBOARD,
+    )
+    await send_transaction_report(update, context, "expense", currency, amount, account=account,
+                                  note=note, client_name=client[1], reply_markup=OBJECT_KEYBOARD)
+    return OBJECT_MENU
 
 
 async def client_expense_account(update, context):
@@ -1252,7 +1529,9 @@ async def show_statement(update, context, client=None):
         f"So'm: {format_money(totals['UZS']['expense'], 'UZS')}\n"
         f"Dollar: {format_money(totals['USD']['expense'], 'USD')}"
     )
-    await reply_report(update, "\n".join(lines), summary, scope_keyboard(context) if is_cashier(update) else BOSS_CLIENT_KEYBOARD)
+    await reply_report(update, "\n".join(lines), summary,
+                       scope_keyboard(context) if is_cashier(update)
+                       else client_objects_keyboard(client_view_session(update, context), False))
     return CLIENT_MENU if client else OTHER_MENU
 
 
@@ -1389,7 +1668,7 @@ async def income_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     client = active_client(context)
     if context.chat_data.get("expense_scope") == "client" and client is None:
         return await clients_start(update, context)
-    keyboard = CLIENT_KEYBOARD if client else MAIN_KEYBOARD
+    keyboard = scope_keyboard(context) if client else MAIN_KEYBOARD
     source = context.chat_data.get("income_source")
     text = " ".join(update.message.text.split())
     if not client and source is None and text.casefold().split()[-1:] not in (["nan"], ["infinity"]) and 0 < len(text) <= 200 and any(c.isalpha() for c in text) and all(
@@ -1508,12 +1787,12 @@ async def client_split_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"✅ Kirimlar qabul qilindi\n👤 Mijoz: {client[1]}\n\n"
         f"Dollar: +{format_usd(usd_cents)}\nKarta: +{format_uzs(card_amount)} so'm\n\n"
         f"{client_totals_text(totals)}",
-        reply_markup=CLIENT_KEYBOARD
+        reply_markup=scope_keyboard(context)
     )
     await send_transaction_report(update, context, "income", "USD", usd_cents,
-                                  client_name=client[1], reply_markup=CLIENT_KEYBOARD)
+                                  client_name=client[1], reply_markup=scope_keyboard(context))
     await send_transaction_report(update, context, "income", "UZS", card_amount, account="card",
-                                  client_name=client[1], reply_markup=CLIENT_KEYBOARD)
+                                  client_name=client[1], reply_markup=scope_keyboard(context))
     return CLIENT_MENU
 
 
@@ -1678,8 +1957,12 @@ async def expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
         EMPLOYEE_REPORT_BUTTON, EMPLOYEE_PREV, EMPLOYEE_NEXT,
         CLIENT_CARD_BUTTON, CLIENT_REPORT_BUTTON, OTHER_BUTTON, OTHER_CASH_BUTTON,
         OTHER_CARD_BUTTON, OTHER_REPORT_BUTTON, PREV_CLIENTS_BUTTON, NEXT_CLIENTS_BUTTON,
+        ADD_OBJECT_BUTTON, OBJECT_REPORT_BUTTON, CLIENT_BACK_BUTTON, OBJECT_PREV, OBJECT_NEXT,
+        *OBJECT_CATEGORIES,
     }:
         return
+    if update.message.text.startswith("🏠 "):
+        return await clients_start(update, context)
     if update.message.text.startswith(("👤 #", "👷 #")):
         section = "Xodimlar" if update.message.text.startswith("👷 #") else "Mijozlar"
         await update.message.reply_text(f"Avval «{section}» tugmasini bosib ro'yxatdan tanlang.", reply_markup=MAIN_KEYBOARD)
@@ -2035,6 +2318,9 @@ async def cancel(
         return ConversationHandler.END
     client = active_client(context)
     if client:
+        obj = get_client_object(client[0], context.chat_data.get("object_id"))
+        if obj:
+            return await show_object(update, context, client, obj)
         return await show_client(update, context, client)
     if "client_choices" in context.chat_data:
         return await clients_start(update, context)
@@ -2102,6 +2388,13 @@ def main():
         ],
 
         states={
+            **{state: [
+                MessageHandler(filters.Regex("^⬅️ Bekor qilish$"), cancel),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, callback),
+            ] for state, callback in (
+                (OBJECT_NAME, object_create), (OBJECT_MENU, object_menu),
+                (OBJECT_AMOUNT, object_amount), (OBJECT_ACCOUNT, object_expense_account),
+            )},
             UNDO_LIST: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, undo_select),
             ],

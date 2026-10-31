@@ -100,12 +100,28 @@ ismi bo'lsa ham, mijozlarga avtomatik biriktirilmaydi va o'zgartirilmaydi.
 2. Ismni yozgach bot darhol kirim turini so'raydi: so'm, dollar, karta yoki `💵 Dollar + 💳 Karta`.
 3. Kerakli hisobni tanlang va miqdorni yozing. `Dollar + Karta` bo'lsa, avval dollarni,
    keyin kartaga tushgan so'mni yozasiz. Masalan: `300` dollar, keyin `500000` so'm karta.
-4. Mijoz oynasiga xarajat nomi va summani yozing yoki `💸 Xarajat yozish`ni bosing.
-5. Keyin `💵 Naqd so'm`, `💳 Karta` yoki `🇺🇸 Dollar`ni tanlang.
+4. Mijoz oynasida `➕ Obyekt qo'shish`ni bosing va obyekt nomini yozing.
+   Bir mijozga bir nechta obyekt qo'shish mumkin. Mavjud obyektni nomli tugmasidan oching.
+5. Obyekt ichida `Mdf`, `Alifrem`, `Kraska`, `Furnita`, `Oyna`, `Yo'l-xarajati`,
+   `Bambuk` yoki `Tosh` turini tanlang, keyin faqat summani yozing.
+6. Keyin `💵 Naqd so'm`, `💳 Karta` yoki `🇺🇸 Dollar`ni tanlang.
    Xarajat faqat hisob tanlangach saqlanadi va shu hisobdan ayriladi.
    Dollar tanlansa yozilgan summa dollar hisoblanadi; `$` belgisi shart emas.
    Tanlashdan oldin bekor qilinsa, pul ayrilmaydi.
-6. `📒 Mijoz hisobi` barcha kirim va xarajatlarni, jami olingan va ishlatilgan pulni ko'rsatadi.
+7. `📒 Obyekt hisobi` faqat tanlangan obyekt xarajatlarini, turlar bo'yicha jamilarini
+   va umumiy sarfini ko'rsatadi. `⬅️ Mijozga qaytish` mijoz oynasini ochadi.
+   `📒 Mijoz hisobi` barcha obyektlardagi xarajatlar va mijozning kirimlarini birga ko'rsatadi.
+
+Mijozlar va obyektlar ro'yxatida nomlar ikki ustunda, yonma-yon chiqadi.
+Uzun ro'yxatlar sahifalanadi. Obyekt nomi 1–80 belgidan iborat bo'lsin.
+Bir mijozda bir xil nomni qayta qo'shish mavjud obyektni ochadi;
+turli mijozlarda bir xil nomli obyektlar alohida saqlanadi.
+Obyekt xarajatlarida boshqa erkin nom qabul qilinmaydi: yuqoridagi sakkiz turdan tanlanadi.
+Har bir xarajat umumiy kassadan bir marta ayiriladi. Karta xarajatiga avvalgidek 1% komissiya qo'shiladi.
+Boshliq mijozning obyektlari va hisobotlarini ko'ra oladi, qo'shish va xarajat yozish faqat kassir uchun.
+Eski mijozlar, operatsiyalar va balanslar saqlanadi; eski xarajatlar obyektlarga avtomatik biriktirilmaydi.
+`/reset` obyekt xarajatlarini ham tozalaydi, ammo obyekt nomlari qoladi; avval to'liq zaxira olinadi.
+Tranzaksiyani qaytarish obyekt hisobini ham yangilaydi.
 
 `Dollar + Karta` kirimining ikkala qismi karta summasi kiritilgach birga saqlanadi.
 O'rtada bekor qilinsa, pul yozilmaydi; mijozning nomi saqlanadi. Hozircha pul
@@ -121,8 +137,9 @@ Dollar avtomatik ravishda so'mga aylantirilmaydi.
 Har bir operatsiya umumiy naqd, dollar yoki karta qoldig'iga ham bir marta ta'sir qiladi.
 Har qanday xarajat uchun tanlangan umumiy hisobda (naqd so'm, dollar yoki karta) yetarli pul bo'lishi kerak. Balans yetmasa xarajat saqlanmaydi va hisobot yuborilmaydi.
 
-Yozuv saqlangach mijoz oynasi ochiq qoladi. `/cancel` joriy kiritishni bekor qilib,
-shu mijozga qaytaradi. Boshqa mijozga o'tish uchun `👥 Mijozlar`ni, umumiy hisobga
+Obyekt xarajati saqlangach obyekt oynasi ochiq qoladi. `/cancel` joriy kiritishni bekor qilib,
+shu obyektga qaytaradi. Mijozdagi kirim bekor qilinsa mijoz oynasi ochiladi.
+Boshqa mijozga o'tish uchun `👥 Mijozlar`ni, umumiy hisobga
 qaytish uchun `⬅️ Asosiy menyu`ni bosing. Oddiy `💰 Pul oldim` tugmasi umumiy kirim uchun.
 
 Mijoz nomi 80 belgigacha bo'lishi mumkin. Katta-kichik harf va ortiqcha bo'shliqlar
@@ -204,7 +221,7 @@ shu papkadagi `backups/` ichida saqlanadi.
 ## Tekshirish
 
 ```sh
-.venv/bin/python -m unittest -v test_kassa.py test_clients.py test_employees.py test_commission.py test_undo.py
+.venv/bin/python -m unittest -v test_kassa.py test_clients.py test_employees.py test_commission.py test_undo.py test_objects.py
 ```
 
 Testlar vaqtinchalik bazadan foydalanadi; Telegramga haqiqiy xabar yubormaydi.

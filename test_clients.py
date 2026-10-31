@@ -263,7 +263,7 @@ class ClientTests(BotTestCase):
         await self.send(kassa.NEXT_CLIENTS_BUTTON)
         markup = self.request.sent[-1]["reply_markup"]
         self.assertIn("Mijoz 12", str(markup))
-        label = next(row[0]["text"] for row in markup["keyboard"] if row[0]["text"] == "Mijoz 12")
+        label = next(button["text"] for row in markup["keyboard"] for button in row if button["text"] == "Mijoz 12")
         await self.send(label)
         self.assertIn("MIJOZ: Mijoz 12", self.request.messages[-1])
         self.assertEqual(self.rows(self.db_path), self.original_rows)
