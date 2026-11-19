@@ -102,28 +102,30 @@ STATISTICS_PERIODS = {
 # TUGMALAR
 # =========================================================
 
+def two_columns(*buttons):
+    """Tugmalarni ikki ustunli qatorlarga bo'ladi; oxirgisi toq bo'lsa, yolg'iz qoladi."""
+    buttons = list(buttons)
+    return [buttons[index:index + 2] for index in range(0, len(buttons), 2)]
+
+
 MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    [
-        ["💰 Pul oldim", "💵 $ maydalash"],
-        [CARD_EXPENSE_BUTTON, STATISTICS_BUTTON],
-        [CLIENTS_BUTTON, OTHER_BUTTON],
-        [EMPLOYEES_BUTTON, BALANCE_BUTTON],
-        [UNDO_BUTTON],
-    ],
+    two_columns(
+        "💰 Pul oldim", "💵 $ maydalash",
+        CARD_EXPENSE_BUTTON, STATISTICS_BUTTON,
+        CLIENTS_BUTTON, OTHER_BUTTON,
+        EMPLOYEES_BUTTON, BALANCE_BUTTON,
+        UNDO_BUTTON,
+    ),
     resize_keyboard=True
 )
 
 CURRENCY_KEYBOARD = ReplyKeyboardMarkup(
-    [
-        ["🇺🇿 So'm", "🇺🇸 Dollar"],
-        [CARD_BUTTON],
-        ["⬅️ Bekor qilish"],
-    ],
+    two_columns("🇺🇿 So'm", "🇺🇸 Dollar", CARD_BUTTON, "⬅️ Bekor qilish"),
     resize_keyboard=True
 )
 
 CLIENT_CURRENCY_KEYBOARD = ReplyKeyboardMarkup(
-    [["🇺🇿 So'm", "🇺🇸 Dollar"], [CARD_BUTTON, CLIENT_SPLIT_BUTTON], ["⬅️ Bekor qilish"]],
+    two_columns("🇺🇿 So'm", "🇺🇸 Dollar", CARD_BUTTON, CLIENT_SPLIT_BUTTON, "⬅️ Bekor qilish"),
     resize_keyboard=True
 )
 
@@ -134,44 +136,43 @@ CANCEL_KEYBOARD = ReplyKeyboardMarkup(
 
 RESET_CONFIRM_TEXT = "✅ Ha, nolga tushirish"
 RESET_KEYBOARD = ReplyKeyboardMarkup(
-    [[RESET_CONFIRM_TEXT], ["⬅️ Bekor qilish"]],
+    two_columns(RESET_CONFIRM_TEXT, "⬅️ Bekor qilish"),
     resize_keyboard=True
 )
 
 STATISTICS_KEYBOARD = ReplyKeyboardMarkup(
-    [["📅 Bugun", "🗓 Shu oy"], ["📋 Barcha vaqt"], [BACK_BUTTON]],
+    two_columns("📅 Bugun", "🗓 Shu oy", "📋 Barcha vaqt", BACK_BUTTON),
     resize_keyboard=True
 )
 
 CLIENT_KEYBOARD = ReplyKeyboardMarkup(
-    [[ADD_OBJECT_BUTTON], [CLIENT_INCOME_BUTTON],
-     [CLIENT_REPORT_BUTTON], [DELETE_CLIENT_BUTTON], [CLIENTS_BUTTON, BACK_BUTTON]],
+    two_columns(ADD_OBJECT_BUTTON, CLIENT_INCOME_BUTTON, CLIENT_REPORT_BUTTON, DELETE_CLIENT_BUTTON,
+                CLIENTS_BUTTON, BACK_BUTTON),
     resize_keyboard=True
 )
 
 OTHER_KEYBOARD = ReplyKeyboardMarkup(
-    [[OTHER_CASH_BUTTON, OTHER_CARD_BUTTON], [OTHER_USD_BUTTON], [OTHER_REPORT_BUTTON], [BACK_BUTTON]],
+    two_columns(OTHER_CASH_BUTTON, OTHER_CARD_BUTTON, OTHER_USD_BUTTON, OTHER_REPORT_BUTTON, BACK_BUTTON),
     resize_keyboard=True
 )
 
 CLIENT_EXPENSE_KEYBOARD = ReplyKeyboardMarkup(
-    [["💵 Naqd so'm", CARD_BUTTON, "🇺🇸 Dollar"], ["⬅️ Bekor qilish"]], resize_keyboard=True
+    two_columns("💵 Naqd so'm", CARD_BUTTON, "🇺🇸 Dollar", "⬅️ Bekor qilish"), resize_keyboard=True
 )
 
 BOSS_KEYBOARD = ReplyKeyboardMarkup(
-    [[CLIENTS_BUTTON, EMPLOYEES_BUTTON], [BALANCE_BUTTON, STATISTICS_BUTTON]], resize_keyboard=True
+    two_columns(CLIENTS_BUTTON, EMPLOYEES_BUTTON, BALANCE_BUTTON, STATISTICS_BUTTON), resize_keyboard=True
 )
 BOSS_CLIENT_KEYBOARD = ReplyKeyboardMarkup(
-    [[CLIENT_REPORT_BUTTON], [CLIENTS_BUTTON, BACK_BUTTON]], resize_keyboard=True
+    two_columns(CLIENT_REPORT_BUTTON, CLIENTS_BUTTON, BACK_BUTTON), resize_keyboard=True
 )
 
 OBJECT_KEYBOARD = ReplyKeyboardMarkup(
-    [list(OBJECT_CATEGORIES[index:index + 2]) for index in range(0, len(OBJECT_CATEGORIES), 2)]
-    + [[OBJECT_REPORT_BUTTON], [CLIENT_BACK_BUTTON, CLIENTS_BUTTON], [BACK_BUTTON]],
+    two_columns(*OBJECT_CATEGORIES, OBJECT_REPORT_BUTTON, CLIENT_BACK_BUTTON, CLIENTS_BUTTON, BACK_BUTTON),
     resize_keyboard=True,
 )
 BOSS_OBJECT_KEYBOARD = ReplyKeyboardMarkup(
-    [[OBJECT_REPORT_BUTTON], [CLIENT_BACK_BUTTON, CLIENTS_BUTTON], [BACK_BUTTON]],
+    two_columns(OBJECT_REPORT_BUTTON, CLIENT_BACK_BUTTON, CLIENTS_BUTTON, BACK_BUTTON),
     resize_keyboard=True,
 )
 
@@ -626,7 +627,7 @@ async def undo_select(update, context):
         return await show_undo_list(update, context)
     context.chat_data["undo_id"] = tid
     await reply_report(update, undo_description(rows), "Tranzaksiya qaytarilsinmi?",
-                       ReplyKeyboardMarkup([[UNDO_CONFIRM_BUTTON], ["⬅️ Bekor qilish"]], resize_keyboard=True))
+                       ReplyKeyboardMarkup(two_columns(UNDO_CONFIRM_BUTTON, "⬅️ Bekor qilish"), resize_keyboard=True))
     return UNDO_CONFIRM
 
 
@@ -911,8 +912,9 @@ def employee_session(update, context):
 
 
 def employee_keyboard(update):
-    rows = [[EMPLOYEE_PAY_BUTTON]] if is_cashier(update) else []
-    return ReplyKeyboardMarkup(rows + [[EMPLOYEE_REPORT_BUTTON], [EMPLOYEES_BUTTON, BACK_BUTTON]], resize_keyboard=True)
+    pay = [EMPLOYEE_PAY_BUTTON] if is_cashier(update) else []
+    return ReplyKeyboardMarkup(two_columns(*pay, EMPLOYEE_REPORT_BUTTON, EMPLOYEES_BUTTON, BACK_BUTTON),
+                               resize_keyboard=True)
 
 
 async def employees_start(update, context):
@@ -931,13 +933,11 @@ async def show_employees(update, context, page=0):
     session = employee_session(update, context)
     session.clear()
     session.update(page=page, choices=choices)
-    keyboard = [[label] for label in choices]
+    keyboard = two_columns(*choices)
     navigation = ([EMPLOYEE_PREV] if page else []) + ([EMPLOYEE_NEXT] if len(rows) > 10 else [])
     if navigation:
         keyboard.append(navigation)
-    if is_cashier(update):
-        keyboard.append([ADD_EMPLOYEE_BUTTON])
-    keyboard.append([BACK_BUTTON])
+    keyboard.extend(two_columns(*([ADD_EMPLOYEE_BUTTON] if is_cashier(update) else []), BACK_BUTTON))
     await update.message.reply_text("Xodimni tanlang:" if rows else "Hozircha xodim yo'q.",
                                     reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
     return EMPLOYEE_LIST
@@ -1150,8 +1150,7 @@ async def show_clients(update, context, page=0):
     session = client_view_session(update, context)
     session.clear()
     session.update(client_page=page, client_choices=choices)
-    labels = list(choices)
-    keyboard = [labels[index:index + 2] for index in range(0, len(labels), 2)]
+    keyboard = two_columns(*choices)
     navigation = []
     if page:
         navigation.append(PREV_CLIENTS_BUTTON)
@@ -1159,9 +1158,7 @@ async def show_clients(update, context, page=0):
         navigation.append(NEXT_CLIENTS_BUTTON)
     if navigation:
         keyboard.append(navigation)
-    if is_cashier(update):
-        keyboard.append([ADD_CLIENT_BUTTON])
-    keyboard.append([BACK_BUTTON])
+    keyboard.extend(two_columns(*([ADD_CLIENT_BUTTON] if is_cashier(update) else []), BACK_BUTTON))
     text = "👥 Mijozni tanlang:" if rows else "Hozircha mijoz yo'q."
     await update.message.reply_text(text, reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
     return CLIENT_LIST
@@ -1254,7 +1251,7 @@ async def client_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"{client[1]} ro'yxatdan o'chirilsinmi?\nKirim-xarajatlar va balans saqlanadi.",
             reply_markup=ReplyKeyboardMarkup(
-                [[DELETE_CLIENT_CONFIRM], ["⬅️ Bekor qilish"]], resize_keyboard=True
+                two_columns(DELETE_CLIENT_CONFIRM, "⬅️ Bekor qilish"), resize_keyboard=True
             )
         )
         return CLIENT_DELETE_CONFIRM
