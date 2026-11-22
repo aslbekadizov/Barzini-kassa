@@ -133,7 +133,7 @@ class ClientTests(BotTestCase):
         self.assertNotIn("Furnituraga", self.request.messages[-1])
         self.assertEqual(len(self.reports()), 8)
 
-    async def test_other_expenses_and_main_menu_do_not_keep_customer_selection(self):
+    async def test_main_menu_expenses_do_not_keep_customer_selection(self):
         client = await self.create_client("Ali")
         await self.income("🇺🇿 So'm", "500000")
         await self.send("Mijoz materiali 100000")
@@ -141,23 +141,22 @@ class ClientTests(BotTestCase):
         before_client = kassa.get_statement(client[0])
         await self.send(kassa.CLIENT_INCOME_BUTTON)
         await self.send("🇺🇿 So'm")
-        await self.send(kassa.OTHER_BUTTON)
+        await self.send(kassa.BACK_BUTTON)
         await self.send("Ijara 200000")
         await self.send("Choy 5$")
         kassa.add_transaction("income", "UZS", 100000, account="card")
-        await self.send(kassa.OTHER_CARD_BUTTON)
+        await self.send(kassa.CARD_EXPENSE_BUTTON)
         await self.send("Transport 50000")
         self.assertEqual(kassa.get_statement(client[0]), before_client)
         self.assertTrue(all(row[-1] is None for row in self.rows(self.db_path)[-4:]))
-        await self.send(kassa.OTHER_REPORT_BUTTON)
-        text = self.request.messages[-1]
-        self.assertIn("Ijara", text)
-        self.assertIn("Transport", text)
-        self.assertIn("Sinov xarajat", text)
-        self.assertNotIn("Mijoz materiali", text)
-        self.assertNotIn("Kirim", text)
-        self.assertIn("So'm: 350 500 so'm", text)
-        self.assertIn("Dollar: $5", text)
+        rows, totals = kassa.get_statement()
+        notes = " ".join(row[4] or "" for row in rows)
+        self.assertIn("Ijara", notes)
+        self.assertIn("Transport", notes)
+        self.assertIn("Sinov xarajat", notes)
+        self.assertNotIn("Mijoz materiali", notes)
+        self.assertEqual(totals["UZS"]["expense"], 350500)
+        self.assertEqual(totals["USD"]["expense"], 500)
         await self.open_client(client)
         await self.send(kassa.BACK_BUTTON)
         await self.send("Chiroq 50000")
@@ -280,7 +279,7 @@ class ClientTests(BotTestCase):
 
     async def test_other_users_cannot_read_create_or_write_clients(self):
         client = await self.create_client("Ali")
-        for command in (kassa.CLIENTS_BUTTON, "/mijozlar", kassa.OTHER_BUTTON, "/boshqa"):
+        for command in (kassa.CLIENTS_BUTTON, "/mijozlar"):
             await self.send(command, actor_id=999)
             self.assertIn("faqat kassir", self.request.messages[-1])
         for text in (kassa.CLIENT_REPORT_BUTTON, kassa.CLIENT_INCOME_BUTTON, "Material 100000"):

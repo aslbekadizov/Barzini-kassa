@@ -127,25 +127,6 @@ class UndoTests(BotTestCase):
         self.assertEqual(kassa.get_balance("UZS"), 1700000)
         self.assertEqual(len(self.audits()), 1)
 
-    async def test_other_dollar_button_accepts_amount_without_symbol_and_retries(self):
-        await self.send(kassa.OTHER_BUTTON)
-        self.assertIn(kassa.OTHER_USD_BUTTON, str(self.request.sent[-1]["reply_markup"]))
-        await self.send(kassa.OTHER_USD_BUTTON)
-        before = self.rows(self.db_path)
-        for text in ("Material", "Material 0", "Material 100.01"):
-            await self.send(text)
-            self.assertIn("❌", self.request.messages[-1])
-            self.assertEqual(self.rows(self.db_path), before)
-        await self.send("Material 12.50")
-        self.assertEqual(kassa.get_balance("USD"), 8750)
-        self.assertEqual(kassa.get_balance("UZS"), 1600000)
-        self.assertEqual(kassa.get_statement()[1]["USD"]["expense"], 1250)
-        self.assertIn("Hisob: 💵 Naqd dollar", self.request.messages[-1])
-        await self.send(kassa.OTHER_USD_BUTTON)
-        await self.send("/cancel")
-        await self.send("Material 1000")
-        self.assertEqual(kassa.get_balance("UZS"), 1599000)
-
     async def test_failed_exchange_delete_rolls_back_audit_and_both_rows(self):
         pair = [r for r in self.rows(self.db_path) if r[2] == "exchange_out"][0]
         before = self.rows(self.db_path)

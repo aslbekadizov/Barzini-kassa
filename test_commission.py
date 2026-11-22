@@ -21,7 +21,7 @@ class CommissionTests(BotTestCase):
         kassa.reverse_transaction(tid, kassa.CASHIER_ID)
         self.assertEqual(kassa.get_balance("UZS", "card"), 101000)
 
-    async def test_employee_message_and_other_expense_include_commission(self):
+    async def test_employee_message_and_card_expense_include_commission(self):
         employee = kassa.add_employee("Ali")
         kassa.add_transaction("income", "UZS", 202000, account="card")
         await self.send(kassa.EMPLOYEES_BUTTON)
@@ -31,8 +31,7 @@ class CommissionTests(BotTestCase):
         await self.send("100000")
         self.assertEqual(self.request.messages[-1], "Aliga 101 000 so'm berildi.")
         self.assertEqual(kassa.get_employee_payments(employee[0])[0][2], 101000)
-        await self.send(kassa.OTHER_BUTTON)
-        await self.send(kassa.OTHER_CARD_BUTTON)
+        await self.send(kassa.CARD_EXPENSE_BUTTON)
         await self.send("Material 100000")
         self.assertEqual(kassa.get_balance("UZS", "card"), 0)
         self.assertIn("101 000 so'm", self.request.messages[-1])

@@ -41,7 +41,6 @@ Token, bazalar, zaxira nusxalari va loglar Git'ga qo'shilmaydi.
 - `/start` — asosiy menyu.
 - `💰 Pul oldim` — naqd so'm, dollar yoki `💳 Karta` hisobiga kirim kiritish.
 - `👥 Mijozlar` yoki `/mijozlar` — mijoz qo'shish va uning alohida hisobini ochish.
-- `🧾 Boshqa xarajatlar` yoki `/boshqa` — mijozga tegishli bo'lmagan xarajatlar.
 - `💵 $ maydalash` — dollarni so'mga almashtirish.
 - `benzin 150000` — asosiy menyudan naqd so'm xarajatini yozish.
 - `Furnituraga 300$` — asosiy menyudan naqd dollar hisobidan 300 dollar xarajat yozish.
@@ -87,6 +86,23 @@ hisobotlarni o'zi ko'ra oladi. Uning menyusida Mijozlar, Balans va Statistika ha
 mijozlarning kirim-xarajatlari, umumiy qoldiqlar va tanlangan davr xarajatlarini ko'radi.
 Mijoz va xodim qo'shish, pul yozish va reset faqat kassirda qoladi.
 
+### Obyektdan xodimga pul berish
+
+Pul qaysi obyekt hisobidan berilganini ko'rish uchun xodimga obyekt ichidan to'lang:
+
+1. `👥 Mijozlar` → mijoz → obyektni tanlang.
+2. `👷 Obyekt xodimlari`ni bosing va xodimni tanlang (yangi xodimni ham shu yerda qo'shish mumkin).
+3. `💸 Pul berish` → so'm, dollar yoki karta → summani yozing.
+
+To'lov shu obyektga bog'lanadi: tasdiq xabarida, boshliqqa yuboriladigan xabarda
+(`Aliga 100 000 so'm berildi.` ostida mijoz va obyekt nomi), `📒 Xodim hisobida`,
+`/tarix` va statistikada `🏠 Mijoz / Obyekt` ko'rinadi. Obyektning `📒 Obyekt hisobi`
+oxirida `👷 XODIMLARGA BERILGAN PUL` bo'limi chiqadi (boshliq ham ko'radi).
+Xodimlarga berilgan pul obyekt va mijozning xarajat turlari hamda `Ishlatilgan`
+jamiga qo'shilmaydi, alohida ko'rsatiladi. `⬅️ Obyektga qaytish` obyekt oynasini ochadi.
+Asosiy menyudagi `👷 Xodimlar` orqali berilgan to'lovlar avvalgidek obyektsiz saqlanadi.
+Obyekt tanlash faqat kassir uchun; eski to'lovlar obyektga bog'lanmaydi.
+
 `/cancel` kiritilayotgan to'lovni bekor qiladi. `/reset` tasdiqlansa xodimlarga
 berilgan pullar tarixi ham tozalanadi, xodim nomlari qoladi. Avval olinadigan
 baza zaxirasi xodimlar va ularning to'lovlarini ham saqlaydi.
@@ -102,8 +118,9 @@ ismi bo'lsa ham, mijozlarga avtomatik biriktirilmaydi va o'zgartirilmaydi.
    keyin kartaga tushgan so'mni yozasiz. Masalan: `300` dollar, keyin `500000` so'm karta.
 4. Mijoz oynasida `➕ Obyekt qo'shish`ni bosing va obyekt nomini yozing.
    Bir mijozga bir nechta obyekt qo'shish mumkin. Mavjud obyektni nomli tugmasidan oching.
-5. Obyekt ichida `Mdf`, `Alifrem`, `Kraska`, `Furnita`, `Oyna`, `Yo'l-xarajati`,
-   `Bambuk` yoki `Tosh` turini tanlang, keyin faqat summani yozing.
+5. Obyektni tanlab, `💸 Obyektga xarajat`ni bosing. Xarajat turlari ikki ustunda chiqadi:
+   birinchi ustunda `Mdf`, `Kraska`, `Alifrem`, `Yolkra`, ikkinchisida `Furnitura`,
+   `Oyna`, `Tosh`, `64 Dokon`. Turni tanlang, keyin faqat summani yozing.
 6. Keyin `💵 Naqd so'm`, `💳 Karta` yoki `🇺🇸 Dollar`ni tanlang.
    Xarajat faqat hisob tanlangach saqlanadi va shu hisobdan ayriladi.
    Dollar tanlansa yozilgan summa dollar hisoblanadi; `$` belgisi shart emas.
@@ -117,6 +134,8 @@ Uzun ro'yxatlar sahifalanadi. Obyekt nomi 1–80 belgidan iborat bo'lsin.
 Bir mijozda bir xil nomni qayta qo'shish mavjud obyektni ochadi;
 turli mijozlarda bir xil nomli obyektlar alohida saqlanadi.
 Obyekt xarajatlarida boshqa erkin nom qabul qilinmaydi: yuqoridagi sakkiz turdan tanlanadi.
+Avvalgi ro'yxatdagi turlar (`Furnita`, `Yo'l-xarajati`, `Bambuk`) bilan saqlangan eski
+xarajatlar o'zgarmaydi va obyekt hisobida o'z nomi bilan ko'rinadi.
 Har bir xarajat umumiy kassadan bir marta ayiriladi. Karta xarajatiga avvalgidek 1% komissiya qo'shiladi.
 Boshliq mijozning obyektlari va hisobotlarini ko'ra oladi, qo'shish va xarajat yozish faqat kassir uchun.
 Eski mijozlar, operatsiyalar va balanslar saqlanadi; eski xarajatlar obyektlarga avtomatik biriktirilmaydi.
@@ -148,15 +167,14 @@ mijoz uchun familiya yoki boshqa farqlovchi izohni nomga qo'shing.
 Ro'yxat uzun bo'lsa, keyingi va oldingi sahifa tugmalari chiqadi.
 Mijozlar va ularning yozuvlari bazada saqlanadi; bot qayta ishga tushganda mijozni qayta tanlang.
 
-## Boshqa xarajatlar
+## Mijozsiz xarajatlar
 
-`🧾 Boshqa xarajatlar` oynasida `Ijara 200000` yoki `Transport 20$` deb yozing.
-Kartadan to'lov uchun `💳 Boshqa xarajat kartadan` tugmasini bosing.
-Bu yozuvlar hech bir mijozga biriktirilmaydi, umumiy kassadan ayiriladi.
-`📒 Boshqa xarajatlar hisobi` mijozga biriktirilmagan barcha xarajatlarni va jami
-sarflangan so'm hamda dollarni ko'rsatadi. Xodimga biriktirilgan to'lovlar bu ro'yxatga
-kirmaydi. Eski mijozsiz xarajatlar ham shu ro'yxatda qoladi.
-Asosiy menyuda avvalgidek to'g'ridan-to'g'ri yozilgan xarajatlar ham mijozsiz saqlanadi.
+Alohida «Boshqa xarajatlar» bo'limi yo'q: mijoz va obyektga tegishli xarajatlar faqat
+obyekt ichidan `💸 Obyektga xarajat` orqali yoziladi. Mijozga tegishli bo'lmagan xarajatni
+asosiy menyuda to'g'ridan-to'g'ri yozing (`benzin 150000`, `Furnituraga 300$`) yoki
+`💳 Kartadan` tugmasini bosing. Bu yozuvlar hech bir mijozga biriktirilmaydi va umumiy
+kassadan ayiriladi, statistika va `/tarix` da ko'rinadi. Avval «Boshqa xarajatlar» orqali
+yozilgan yozuvlar bazada saqlanadi.
 
 ## Dollar xarajatlari
 
@@ -245,9 +263,6 @@ undan ayriladi. Natija mijoz/xodim hisobi, tarix va statistikada ham aks etadi.
 Qaytarish balansni manfiy qilsa, bajarilmaydi. Dollar maydalashning ikkala
 yozuvi birga qaytariladi; dollar+karta kirimining har bir yozuvi alohida tanlanadi.
 Asl yozuvlar va xodimga bog'lanish ma'lumoti `transaction_undo` jadvalida saqlanadi.
-
-`🧾 Boshqa xarajatlar` → `💵 Boshqa dollar xarajat` orqali xarajat nomi
-va dollar miqdorini yozing. Bu rejimda `$` belgisi shart emas.
 
 Kartadan barcha xarajatlarga, jumladan mijoz va xodim to'lovlariga 1% komissiya
 qo'shiladi. Tasdiq, boshliqqa xabar, statistika va mijoz/xodim hisobida jami

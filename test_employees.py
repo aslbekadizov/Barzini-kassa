@@ -64,7 +64,7 @@ class EmployeeTests(BotTestCase):
         for text in (kassa.EMPLOYEE_PAY_BUTTON, '100000', '300$', kassa.CARD_BUTTON):
             await self.send(text, actor_id=boss)
             self.assertIn('faqat kassir', self.request.messages[-1])
-        for command in ('/tarix', '/reset', '/boshqa'):
+        for command in ('/tarix', '/reset'):
             await self.send(command, actor_id=boss)
             self.assertIn('faqat kassir', self.request.messages[-1])
         self.assertEqual(kassa.get_employees(), [employee])

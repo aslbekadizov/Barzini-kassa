@@ -838,7 +838,7 @@ if __name__ == "__main__":
 
 
 class NoOverdraftTests(BotTestCase):
-    async def test_cash_dollar_client_and_other_expenses_fail_without_history_or_report(self):
+    async def test_cash_dollar_and_client_expenses_fail_without_history_or_report(self):
         before = self.rows(self.db_path)
         reports = lambda: sum(m["chat_id"] == kassa.REPORT_CHAT_ID for m in self.request.sent)
         report_count = reports()
@@ -846,9 +846,6 @@ class NoOverdraftTests(BotTestCase):
             await self.send(text)
             self.assertIn("Balansda pul yetarli emas", self.request.messages[-1])
             self.assertEqual(self.rows(self.db_path), before)
-        await self.send(kassa.OTHER_BUTTON)
-        await self.send("Material 1600001")
-        self.assertIn("Balansda pul yetarli emas", self.request.messages[-1])
         client = kassa.add_client("Ali")
         await self.send(kassa.CLIENTS_BUTTON)
         await self.send(client[1])
