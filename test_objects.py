@@ -424,3 +424,205 @@ class ObjectTests(BotTestCase):
         self.assertEqual(kassa.get_employee_payments(employee[0])[0][5:], (None, None))
         with self.assertRaises(ValueError):
             kassa.add_employee_payment(employee[0], "UZS", 1000, object_id=9999)
+
+    def window(self):
+        """Kassirga yuborilgan oxirgi klaviatura (boshliqqa ketgan xabarlar hisobga olinmaydi)."""
+        message = next(m for m in reversed(self.request.sent)
+                       if m["chat_id"] != kassa.REPORT_CHAT_ID and "reply_markup" in m)
+        return str([[button["text"] for button in row] for row in message["reply_markup"]["keyboard"]])
+
+    async def test_object_window_has_income_card_and_employee_buttons_in_two_columns(self):
+        client = kassa.add_client("Nuri")
+        await self.create_object(client)
+        for button in (kassa.OBJECT_EXPENSE_BUTTON, kassa.OBJECT_CARD_BUTTON, kassa.OBJECT_EMPLOYEES_BUTTON,
+                       kassa.CLIENT_INCOME_BUTTON, kassa.OBJECT_REPORT_BUTTON):
+            self.assertIn(button, self.window())
+        # Asosiy menyudagi "Pul oldim" va "Kartadan" nomlari bilan adashmasin.
+        self.assertNotIn(kassa.CARD_EXPENSE_BUTTON, self.window())
+        self.assertNotIn("💰 Pul oldim", self.window())
+        self.assert_two_columns()
+
+    async def test_income_from_object_window_is_saved_for_the_client_and_object_stays_open(self):
+        client = kassa.add_client("Nuri")
+        obj = await self.create_object(client)
+        before = kassa.get_balance("UZS")
+        await self.send(kassa.CLIENT_INCOME_BUTTON)
+        self.assertIn("Mijoz: Nuri", self.request.messages[-1])
+        await self.send("🇺🇿 So'm")
+        await self.send("500000")
+        self.assertEqual(kassa.get_balance("UZS"), before + 500000)
+        self.assertEqual(kassa.get_statement(client[0])[1]["UZS"]["income"], 500000)
+        self.assertIn("Mijoz: Nuri", self.reports()[-1]["text"])
+        self.assertIn(kassa.OBJECT_EXPENSE_BUTTON, self.window())
+        await self.spend("Mdf", "1000")
+        self.assertEqual(len(kassa.get_object_expenses(client[0], obj[0])), 1)
+        await self.send(kassa.CLIENT_INCOME_BUTTON)
+        await self.send(kassa.CARD_BUTTON)
+        await self.send("200000")
+        self.assertEqual(kassa.get_balance("UZS", "card"), 200000)
+        self.assertIn(kassa.OBJECT_EXPENSE_BUTTON, self.window())
+        await self.send(kassa.CLIENT_INCOME_BUTTON)
+        await self.send(kassa.CLIENT_SPLIT_BUTTON)
+        await self.send("100")
+        await self.send("300000")
+        self.assertIn(kassa.OBJECT_EXPENSE_BUTTON, self.window())
+        totals = kassa.get_statement(client[0])[1]
+        self.assertEqual((totals["USD"]["income"], totals["UZS"]["income"]), (10000, 1000000))
+        await self.send(kassa.CLIENT_INCOME_BUTTON)
+        await self.send("/cancel")
+        self.assertIn("Obyekt: Oshxona", self.request.messages[-1])
+        self.assertIn(kassa.OBJECT_EXPENSE_BUTTON, self.window())
+
+    async def test_card_button_pays_from_the_card_without_asking_for_an_account(self):
+        client = kassa.add_client("Nuri")
+        obj = await self.create_object(client)
+        kassa.add_transaction("income", "UZS", 202000, account="card")
+        await self.send(kassa.OBJECT_CARD_BUTTON)
+        self.assertEqual(self.labels()[0], ["Mdf", "Furnitura"])
+        self.assertIn("1% komissiya", self.request.messages[-1])
+        await self.send("Mdf")
+        before = self.rows(self.db_path)
+        for amount, error in (("12.50", "mos emas"), ("300000", "yetarli emas")):
+            await self.send(amount)
+            self.assertIn(error, self.request.messages[-1])
+            self.assertEqual(self.rows(self.db_path), before)
+        await self.send("100000")
+        self.assertIn("Xarajat yozildi", self.request.messages[-2])
+        self.assertEqual(kassa.get_balance("UZS", "card"), 101000)
+        self.assertEqual(kassa.get_object_expenses(client[0], obj[0])[0][1:], ("Mdf", "UZS", 101000, "card"))
+        self.assertIn("Obyekt: Oshxona", self.reports()[-1]["text"])
+        self.assertIn(kassa.OBJECT_EXPENSE_BUTTON, self.window())
+        # Oddiy "Obyektga xarajat" avvalgidek hisobni so'raydi.
+        await self.send(kassa.OBJECT_CARD_BUTTON)
+        await self.send("Tosh")
+        await self.send("/cancel")
+        await self.send(kassa.OBJECT_EXPENSE_BUTTON)
+        await self.send("Oyna")
+        await self.send("1000")
+        self.assertIn("Qaysi hisobdan", self.request.messages[-1])
+
+    async def test_employee_and_client_accounts_show_the_object(self):
+        client, employee = kassa.add_client("Nuri"), kassa.add_employee("Ali")
+        await self.create_object(client)
+        await self.pay_employee(employee)
+        await self.send(kassa.EMPLOYEE_REPORT_BUTTON)
+        text = self.request.messages[-1]
+        self.assertIn("1. 🏠 Nuri / Oshxona — 100 000 so'm (naqd)", text)
+        self.assertIn("OBYEKTLAR BO'YICHA\nNuri / Oshxona: 100 000 so'm, $0", text)
+        await self.send(kassa.BACK_BUTTON)
+        await self.send(kassa.EMPLOYEES_BUTTON)
+        await self.send("Ali")
+        await self.send(kassa.EMPLOYEE_PAY_BUTTON)
+        await self.send("🇺🇿 So'm")
+        await self.send("2000")
+        await self.send(kassa.EMPLOYEE_REPORT_BUTTON)
+        text = self.request.messages[-1]
+        self.assertIn("Obyektsiz: 2 000 so'm, $0", text)
+        self.assertIn("Nuri / Oshxona: 100 000 so'm, $0", text)
+        await self.open_client(client)
+        await self.send(kassa.CLIENT_REPORT_BUTTON)
+        text = self.request.messages[-1]
+        self.assertIn("Ali — 🏠 Oshxona — 100 000 so'm (naqd)", text)
+        self.assertIn("XODIMLARGA BERILGAN PUL\n100 000 so'm\n$0", text)
+        self.assertNotIn("2 000", text)
+        self.assertIn("Ishlatilgan: 0 so'm", text)
+
+    async def test_income_from_object_is_linked_and_shown_with_the_object_everywhere(self):
+        client = kassa.add_client("Nuri")
+        obj = await self.create_object(client)
+        await self.send(kassa.CLIENT_INCOME_BUTTON)
+        self.assertIn("Obyekt: Oshxona", self.request.messages[-1])
+        await self.send("🇺🇿 So'm")
+        await self.send("500000")
+        self.assertIn("Obyekt: Oshxona", self.request.messages[-2])
+        self.assertIn("🏠 Obyekt: Oshxona", self.reports()[-1]["text"])
+        await self.send(kassa.CLIENT_INCOME_BUTTON)
+        await self.send(kassa.CLIENT_SPLIT_BUTTON)
+        await self.send("100")
+        await self.send("300000")
+        self.assertEqual(sum("🏠 Obyekt: Oshxona" in report["text"] for report in self.reports()), 3)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            self.assertEqual(conn.execute("SELECT object_id FROM object_incomes").fetchall(), [(obj[0],)] * 3)
+        self.assertEqual(len(kassa.get_object_incomes(client[0], obj[0])), 3)
+        await self.send(kassa.OBJECT_REPORT_BUTTON)
+        text = self.request.messages[-1]
+        self.assertIn("💰 OLINGAN PUL (KIRIM)\n1. Pul olindi — +500 000 so'm (naqd)", text)
+        self.assertIn("OLINGAN PUL\n800 000 so'm\n$100", text)
+        self.assertLess(text.index("OLINGAN PUL (KIRIM)"), text.index("XARAJATLAR"))
+        await self.send(kassa.CLIENT_BACK_BUTTON)
+        await self.send(kassa.CLIENT_REPORT_BUTTON)
+        text = self.request.messages[-1]
+        self.assertIn("Obyekt: Oshxona\nPul olindi — +500 000 so'm (naqd)", text)
+        self.assertIn("OBYEKTLAR BO'YICHA\n🏠 Oshxona\nOlingan: 800 000 so'm, $100\nIshlatilgan: 0 so'm, $0", text)
+        self.assertIn("Mijoz: Nuri\nObyekt: Oshxona\nPul olindi", " ".join(row[4] for row in kassa.get_history(20)))
+
+    async def test_income_from_client_window_stays_without_object_and_is_listed_last(self):
+        client = kassa.add_client("Nuri")
+        await self.create_object(client)
+        await self.send(kassa.CLIENT_BACK_BUTTON)
+        await self.send(kassa.CLIENT_INCOME_BUTTON)
+        self.assertNotIn("Obyekt:", self.request.messages[-1])
+        await self.send("🇺🇿 So'm")
+        await self.send("100000")
+        self.assertNotIn("Obyekt:", self.request.messages[-2])
+        self.assertNotIn("Obyekt", self.reports()[-1]["text"])
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM object_incomes").fetchone()[0], 0)
+        await self.send("🏠 Oshxona")
+        await self.spend("Mdf", "1000")
+        await self.send(kassa.CLIENT_BACK_BUTTON)
+        await self.send(kassa.CLIENT_REPORT_BUTTON)
+        text = self.request.messages[-1]
+        self.assertIn("🏠 Oshxona\nOlingan: 0 so'm, $0\nIshlatilgan: 1 000 so'm, $0", text)
+        self.assertIn("Obyektsiz\nOlingan: 100 000 so'm, $0\nIshlatilgan: 0 so'm, $0", text)
+        self.assertLess(text.index("🏠 Oshxona\nOlingan"), text.index("Obyektsiz"))
+
+    async def test_income_for_another_clients_object_is_rejected_atomically(self):
+        ali, vali = kassa.add_client("Ali"), kassa.add_client("Vali")
+        obj = kassa.add_client_object(ali[0], "Oshxona")
+        before = self.rows(self.db_path)
+        with self.assertRaises(ValueError):
+            kassa.add_transaction("income", "UZS", 1000, client_id=vali[0], object_id=obj[0])
+        with self.assertRaises(ValueError):
+            kassa.add_transaction("income", "UZS", 1000, object_id=obj[0])
+        with self.assertRaises(ValueError):
+            kassa.add_split_client_income(vali[0], 100, 1000, object_id=obj[0])
+        self.assertEqual(self.rows(self.db_path), before)
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM object_incomes").fetchone()[0], 0)
+
+    async def test_undo_and_reset_handle_the_object_link_of_an_income(self):
+        client = kassa.add_client("Nuri")
+        obj = await self.create_object(client)
+        await self.send(kassa.CLIENT_INCOME_BUTTON)
+        await self.send("🇺🇿 So'm")
+        await self.send("5000")
+        tid = self.rows(self.db_path)[-1][0]
+        self.assertIn("Nuri · 🏠 Oshxona", kassa.undo_description(kassa.get_undo_rows(tid)))
+        before = kassa.get_balance("UZS")
+        kassa.reverse_transaction(tid, kassa.CASHIER_ID)
+        self.assertEqual(kassa.get_balance("UZS"), before - 5000)
+        self.assertEqual(kassa.get_object_incomes(client[0], obj[0]), [])
+        with closing(sqlite3.connect(self.db_path)) as conn:
+            audit = json.loads(conn.execute("SELECT original_rows FROM transaction_undo").fetchone()[0])[0]
+        self.assertEqual(audit["income_object_id"], obj[0])
+        await self.send(kassa.CLIENT_INCOME_BUTTON)
+        await self.send("🇺🇿 So'm")
+        await self.send("7000")
+        await self.send("/reset")
+        await self.send(kassa.RESET_CONFIRM_TEXT)
+        self.assertEqual(kassa.get_client_objects(client[0]), [obj])
+        self.assertEqual(kassa.get_object_incomes(client[0], obj[0]), [])
+        with closing(sqlite3.connect(self.backups()[0])) as conn:
+            self.assertEqual(conn.execute("SELECT object_id FROM object_incomes").fetchall(), [(obj[0],)])
+
+    async def test_old_database_gets_the_income_link_table(self):
+        client = kassa.add_client("Nuri")
+        obj = kassa.add_client_object(client[0], "Oshxona")
+        kassa.add_transaction("income", "UZS", 1000, client_id=client[0], object_id=obj[0])
+        with closing(sqlite3.connect(self.db_path)) as conn, conn:
+            conn.execute("DROP TABLE object_incomes")
+        kassa.init_db()
+        kassa.init_db()
+        self.assertEqual(kassa.get_object_incomes(client[0], obj[0]), [])
+        self.assertEqual(kassa.get_statement(client[0])[0][0][1:4], ("income", "UZS", 1000))

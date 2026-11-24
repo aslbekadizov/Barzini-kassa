@@ -99,7 +99,9 @@ To'lov shu obyektga bog'lanadi: tasdiq xabarida, boshliqqa yuboriladigan xabarda
 `/tarix` va statistikada `🏠 Mijoz / Obyekt` ko'rinadi. Obyektning `📒 Obyekt hisobi`
 oxirida `👷 XODIMLARGA BERILGAN PUL` bo'limi chiqadi (boshliq ham ko'radi).
 Xodimlarga berilgan pul obyekt va mijozning xarajat turlari hamda `Ishlatilgan`
-jamiga qo'shilmaydi, alohida ko'rsatiladi. `⬅️ Obyektga qaytish` obyekt oynasini ochadi.
+jamiga qo'shilmaydi, alohida ko'rsatiladi. `📒 Xodim hisobi`da har bir to'lov oldida
+`🏠 Mijoz / Obyekt` turadi va oxirida `OBYEKTLAR BO'YICHA` jami chiqadi; `📒 Mijoz hisobi`da
+ham `👷 XODIMLARGA BERILGAN PUL` bo'limi bor. `⬅️ Obyektga qaytish` obyekt oynasini ochadi.
 Asosiy menyudagi `👷 Xodimlar` orqali berilgan to'lovlar avvalgidek obyektsiz saqlanadi.
 Obyekt tanlash faqat kassir uchun; eski to'lovlar obyektga bog'lanmaydi.
 
@@ -127,7 +129,19 @@ ismi bo'lsa ham, mijozlarga avtomatik biriktirilmaydi va o'zgartirilmaydi.
    Tanlashdan oldin bekor qilinsa, pul ayrilmaydi.
 7. `📒 Obyekt hisobi` faqat tanlangan obyekt xarajatlarini, turlar bo'yicha jamilarini
    va umumiy sarfini ko'rsatadi. `⬅️ Mijozga qaytish` mijoz oynasini ochadi.
-   `📒 Mijoz hisobi` barcha obyektlardagi xarajatlar va mijozning kirimlarini birga ko'rsatadi.
+   `📒 Mijoz hisobi` barcha obyektlardagi xarajatlar va mijozning kirimlarini birga ko'rsatadi:
+   har bir yozuvda obyekt nomi bor, oxirida `OBYEKTLAR BO'YICHA` bo'limida har obyektning
+   olingan, ishlatilgan va xodimlarga berilgan puli alohida chiqadi.
+8. Obyekt oynasidan ham kirim va karta xarajatini yozish mumkin:
+   - `💰 Mijozdan pul oldim` — shu mijozdan so'm, dollar, karta yoki `Dollar + Karta` kirimi.
+     Kirim mijozga va shu obyektga yoziladi: obyekt nomi tasdiq xabarida, boshliqqa xabarda
+     (`🏠 Obyekt`), `📒 Obyekt hisobi`dagi `💰 OLINGAN PUL` bo'limida, `📒 Mijoz hisobi`da va
+     `/tarix`da ko'rinadi. Saqlangach obyekt oynasi ochiq qoladi. Mijoz oynasidagi (obyekt
+     tanlanmagan) `💰 Mijozdan pul oldim` kirimi obyektga bog'lanmaydi va `Mijoz hisobi`da
+     `Obyektsiz` bo'lib chiqadi; eski kirimlar ham shunday qoladi.
+   - `💳 Obyektga kartadan` — xarajat turini tanlab, summani yozasiz; hisob so'ralmaydi,
+     summa kartadan 1% komissiya bilan ayriladi.
+   Asosiy menyudagi `💰 Pul oldim` va `💳 Kartadan` avvalgidek ishlaydi (mijozga bog'lanmaydi).
 
 Mijozlar va obyektlar ro'yxatida nomlar ikki ustunda, yonma-yon chiqadi.
 Uzun ro'yxatlar sahifalanadi. Obyekt nomi 1–80 belgidan iborat bo'lsin.

@@ -54,6 +54,7 @@ OBJECT_NAME, OBJECT_MENU, OBJECT_AMOUNT, OBJECT_ACCOUNT, OBJECT_CATEGORY = range
 ADD_OBJECT_BUTTON = "➕ Obyekt qo'shish"
 OBJECT_EXPENSE_BUTTON = "💸 Obyektga xarajat"
 OBJECT_EMPLOYEES_BUTTON = "👷 Obyekt xodimlari"
+OBJECT_CARD_BUTTON = "💳 Obyektga kartadan"
 OBJECT_BACK_BUTTON = "⬅️ Obyektga qaytish"
 OBJECT_REPORT_BUTTON = "📒 Obyekt hisobi"
 CLIENT_BACK_BUTTON = "⬅️ Mijozga qaytish"
@@ -162,8 +163,8 @@ BOSS_CLIENT_KEYBOARD = ReplyKeyboardMarkup(
 )
 
 OBJECT_KEYBOARD = ReplyKeyboardMarkup(
-    two_columns(OBJECT_EXPENSE_BUTTON, OBJECT_EMPLOYEES_BUTTON, OBJECT_REPORT_BUTTON, CLIENT_BACK_BUTTON,
-                CLIENTS_BUTTON, BACK_BUTTON),
+    two_columns(OBJECT_EXPENSE_BUTTON, OBJECT_CARD_BUTTON, OBJECT_EMPLOYEES_BUTTON, CLIENT_INCOME_BUTTON,
+                OBJECT_REPORT_BUTTON, CLIENT_BACK_BUTTON, CLIENTS_BUTTON, BACK_BUTTON),
     resize_keyboard=True,
 )
 OBJECT_CATEGORY_KEYBOARD = ReplyKeyboardMarkup(
@@ -226,6 +227,11 @@ def init_db():
             category TEXT NOT NULL
         )""")
         conn.execute("CREATE INDEX IF NOT EXISTS expenses_object ON object_expenses(object_id, transaction_id)")
+        conn.execute("""CREATE TABLE IF NOT EXISTS object_incomes (
+            transaction_id INTEGER PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,
+            object_id INTEGER NOT NULL REFERENCES client_objects(id)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS incomes_object ON object_incomes(object_id, transaction_id)")
         conn.execute("CREATE TABLE IF NOT EXISTS employees (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE)")
         conn.execute("""CREATE TABLE IF NOT EXISTS employee_payments (
             transaction_id INTEGER PRIMARY KEY REFERENCES transactions(id) ON DELETE CASCADE,
@@ -279,6 +285,15 @@ def get_object_employee_payments(client_id, object_id):
                             "JOIN client_objects o ON o.id = p.object_id "
                             "WHERE o.client_id = ? AND o.id = ? ORDER BY t.created_at, t.id",
                             (client_id, object_id)).fetchall()
+
+
+def get_client_employee_payments(client_id):
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        return conn.execute("SELECT t.created_at, e.name, o.name, t.currency, -t.amount, t.account "
+                            "FROM transactions t JOIN employee_payments p ON p.transaction_id = t.id "
+                            "JOIN employees e ON e.id = p.employee_id "
+                            "JOIN client_objects o ON o.id = p.object_id "
+                            "WHERE o.client_id = ? ORDER BY t.created_at, t.id", (client_id,)).fetchall()
 
 
 def add_employee_payment(employee_id, currency, amount, account="cash", note="", actor_id=None, object_id=None):
@@ -369,6 +384,22 @@ def link_object_expense(conn, transaction_id, client_id, object_id, category):
                  (transaction_id, object_id, category))
 
 
+def link_object_income(conn, transaction_id, client_id, object_id):
+    if not conn.execute("SELECT 1 FROM client_objects o JOIN clients c ON c.id = o.client_id "
+                        "WHERE o.id = ? AND o.client_id = ? AND c.archived = 0", (object_id, client_id)).fetchone():
+        raise ValueError("Obyekt ushbu mijozga tegishli emas")
+    conn.execute("INSERT INTO object_incomes(transaction_id, object_id) VALUES (?, ?)", (transaction_id, object_id))
+
+
+def get_object_incomes(client_id, object_id):
+    with closing(sqlite3.connect(DB_PATH)) as conn:
+        return conn.execute("SELECT t.created_at, t.currency, t.amount, t.account, t.note "
+                            "FROM transactions t JOIN object_incomes p ON p.transaction_id = t.id "
+                            "JOIN client_objects o ON o.id = p.object_id "
+                            "WHERE o.client_id = ? AND o.id = ? ORDER BY t.created_at, t.id",
+                            (client_id, object_id)).fetchall()
+
+
 def get_object_expenses(client_id, object_id):
     with closing(sqlite3.connect(DB_PATH)) as conn:
         return conn.execute("SELECT t.created_at, p.category, t.currency, -t.amount, t.account "
@@ -379,17 +410,23 @@ def get_object_expenses(client_id, object_id):
 
 
 def get_statement(client_id=None):
-    condition = "client_id = ? AND kind IN ('income', 'expense')" if client_id is not None else "client_id IS NULL AND kind = 'expense'"
+    condition = ("transactions.client_id = ? AND transactions.kind IN ('income', 'expense')"
+                 if client_id is not None else "transactions.client_id IS NULL AND transactions.kind = 'expense'")
     params = (client_id,) if client_id is not None else ()
     if client_id is None:
         condition += " AND NOT EXISTS (SELECT 1 FROM employee_payments p WHERE p.transaction_id = transactions.id)"
     with closing(sqlite3.connect(DB_PATH)) as conn:
         rows = conn.execute(
-            "SELECT created_at, kind, currency, amount, note, account FROM transactions "
-            f"WHERE {condition} ORDER BY created_at, id", params
+            "SELECT transactions.created_at, transactions.kind, transactions.currency, transactions.amount, "
+            "transactions.note, transactions.account, COALESCE(io.name, eo.name) FROM transactions "
+            "LEFT JOIN object_incomes oi ON oi.transaction_id = transactions.id "
+            "LEFT JOIN client_objects io ON io.id = oi.object_id "
+            "LEFT JOIN object_expenses oe ON oe.transaction_id = transactions.id "
+            "LEFT JOIN client_objects eo ON eo.id = oe.object_id "
+            f"WHERE {condition} ORDER BY transactions.created_at, transactions.id", params
         ).fetchall()
     totals = {currency: {"income": 0, "expense": 0} for currency in ("UZS", "USD")}
-    for _, kind, currency, amount, _, _ in rows:
+    for _, kind, currency, amount, _, _, _ in rows:
         totals[currency][kind] += amount if kind == "income" else -amount
     return rows, totals
 
@@ -427,25 +464,28 @@ def add_transaction(kind, currency, amount, note="", actor_id=None, account="cas
             )
         )
         if object_id is not None:
-            if kind != "expense" or amount >= 0:
-                raise ValueError("Obyektga faqat xarajat yoziladi")
-            link_object_expense(conn, cursor.lastrowid, client_id, object_id, category)
+            if kind == "income" and amount > 0:
+                link_object_income(conn, cursor.lastrowid, client_id, object_id)
+            elif kind == "expense" and amount < 0:
+                link_object_expense(conn, cursor.lastrowid, client_id, object_id, category)
+            else:
+                raise ValueError("Obyektga faqat kirim yoki xarajat yoziladi")
 
 
-def add_split_client_income(client_id, usd_cents, card_amount, actor_id=None):
+def add_split_client_income(client_id, usd_cents, card_amount, actor_id=None, object_id=None):
     if client_id is None or not (0 < usd_cents <= 9223372036854775807 and 0 < card_amount <= 9223372036854775807):
         raise ValueError("Mijoz va ikkala musbat summa kerak")
     created_at = now_text()
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
         conn.execute("PRAGMA foreign_keys = ON")
-        conn.executemany(
-            "INSERT INTO transactions (created_at, kind, currency, amount, note, actor_id, account, client_id) "
-            "VALUES (?, 'income', ?, ?, ?, ?, ?, ?)",
-            [
-                (created_at, "USD", usd_cents, "Dollar olindi", actor_id, "cash", client_id),
-                (created_at, "UZS", card_amount, "Kartaga pul olindi", actor_id, "card", client_id),
-            ]
-        )
+        for currency, amount, note, account in (("USD", usd_cents, "Dollar olindi", "cash"),
+                                                ("UZS", card_amount, "Kartaga pul olindi", "card")):
+            cursor = conn.execute(
+                "INSERT INTO transactions (created_at, kind, currency, amount, note, actor_id, account, client_id) "
+                "VALUES (?, 'income', ?, ?, ?, ?, ?, ?)",
+                (created_at, currency, amount, note, actor_id, account, client_id))
+            if object_id is not None:
+                link_object_income(conn, cursor.lastrowid, client_id, object_id)
 
 
 class InsufficientFunds(Exception):
@@ -553,6 +593,8 @@ def undo_rows(conn, transaction_id):
                                 (item["id"],)).fetchone()
         item["employee_id"] = employee[0] if employee else None
         item["employee_object_id"] = employee[1] if employee else None
+        income = conn.execute("SELECT object_id FROM object_incomes WHERE transaction_id = ?", (item["id"],)).fetchone()
+        item["income_object_id"] = income[0] if income else None
         obj = conn.execute("SELECT object_id, category FROM object_expenses WHERE transaction_id = ?",
                            (item["id"],)).fetchone()
         item["object_id"] = obj[0] if obj else None
@@ -564,6 +606,10 @@ def undo_rows(conn, transaction_id):
                              "WHERE o.id = ?", (item["employee_object_id"],)).fetchone()
         if employee and place:
             item["owner"] += f" · 🏠 {place[0]} / {place[1]}"
+        if item["income_object_id"] is not None:
+            place = conn.execute("SELECT name FROM client_objects WHERE id = ?", (item["income_object_id"],)).fetchone()
+            if place:
+                item["owner"] += f" · 🏠 {place[0]}"
     return rows
 
 
@@ -701,12 +747,15 @@ def get_history(limit=10):
                    CASE WHEN e.id IS NOT NULL THEN 'Xodim: ' || e.name
                             || COALESCE(' · 🏠 ' || oc.name || ' / ' || o.name, '') || char(10) || COALESCE(t.note, '')
                         WHEN c.id IS NULL THEN t.note
-                        ELSE 'Mijoz: ' || c.name || char(10) || COALESCE(t.note, '') END,
+                        ELSE 'Mijoz: ' || c.name || char(10) || COALESCE('Obyekt: ' || io.name || char(10), '')
+                            || COALESCE(t.note, '') END,
                    t.account
             FROM transactions t LEFT JOIN clients c ON c.id = t.client_id
             LEFT JOIN employee_payments p ON p.transaction_id = t.id
             LEFT JOIN employees e ON e.id = p.employee_id
             LEFT JOIN client_objects o ON o.id = p.object_id LEFT JOIN clients oc ON oc.id = o.client_id
+            LEFT JOIN object_incomes oi ON oi.transaction_id = t.id
+            LEFT JOIN client_objects io ON io.id = oi.object_id
             ORDER BY t.id DESC
             LIMIT ?
             """,
@@ -1056,8 +1105,8 @@ async def show_employee(update, context, employee):
         totals[(account, currency)] += amount
         source = "karta" if account == "card" else "naqd"
         detail = f" — {note}" if note else ""
-        place = f"\n🏠 {client_name} / {object_name}" if object_name else ""
-        lines.append(f"{index}. {format_money(amount, currency)} ({source}){detail}{place}\n{created_at[:16]}")
+        place = f"🏠 {client_name} / {object_name} — " if object_name else ""
+        lines.append(f"{index}. {place}{format_money(amount, currency)} ({source}){detail}\n{created_at[:16]}")
     if not rows:
         lines.append("Hozircha pul berilmagan.")
     summary = (
@@ -1067,6 +1116,15 @@ async def show_employee(update, context, employee):
         f"Jami so'm: {format_money(totals[('cash', 'UZS')] + totals[('card', 'UZS')], 'UZS')}\n"
         f"Dollar: {format_usd(totals[('cash', 'USD')])}"
     )
+    if any(row[5] for row in rows):
+        places = {}
+        for _, currency, amount, _, _, object_name, client_name in rows:
+            key = f"{client_name} / {object_name}" if object_name else "Obyektsiz"
+            places.setdefault(key, {"UZS": 0, "USD": 0})[currency] += amount
+        summary += "\n\nOBYEKTLAR BO'YICHA\n" + "\n".join(
+            f"{key}: {format_money(amounts['UZS'], 'UZS')}, {format_money(amounts['USD'], 'USD')}"
+            for key, amounts in places.items()
+        )
     await reply_report(update, "\n".join(lines), summary, employee_keyboard(update, context))
     return EMPLOYEE_MENU
 
@@ -1274,11 +1332,15 @@ async def client_create(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await client_income_prompt(update, context, client)
 
 
-async def client_income_prompt(update, context, client):
+async def client_income_prompt(update, context, client, obj=None):
     context.chat_data.clear()
     context.chat_data.update(expense_scope="client", client_id=client[0])
+    if obj is not None:
+        # Kirim shu obyektga yoziladi; tugagach obyekt oynasi ochiq qoladi.
+        context.chat_data["object_id"] = obj[0]
+    place = f"🏠 Obyekt: {obj[1]}\n" if obj else ""
     await update.message.reply_text(
-        f"👤 Mijoz: {client[1]}\n\nPulni qaysi hisobga oldingiz?",
+        f"👤 Mijoz: {client[1]}\n{place}\nPulni qaysi hisobga oldingiz?",
         reply_markup=CLIENT_CURRENCY_KEYBOARD
     )
     return CHOOSE_CURRENCY
@@ -1386,20 +1448,36 @@ async def object_menu(update, context):
         rows = get_object_expenses(client[0], obj[0])
         lines = [f"👤 Mijoz: {client[1]}", f"🏠 OBYEKT HISOBI: {obj[1]}", ""]
         totals = {category: {"UZS": 0, "USD": 0} for category in OBJECT_CATEGORIES}
+        expense_lines = []
         for index, (created_at, category, currency, amount, account) in enumerate(rows, 1):
             # Avvalgi ro'yxatdagi turlar (masalan Bambuk) bazada qolgan bo'lishi mumkin.
             totals.setdefault(category, {"UZS": 0, "USD": 0})[currency] += amount
             source = "karta" if account == "card" else "naqd"
-            lines.append(f"{index}. {category} — {format_money(amount, currency)} ({source})\n{created_at[:16]}")
-        payments = get_object_employee_payments(client[0], obj[0])
+            expense_lines.append(f"{index}. {category} — {format_money(amount, currency)} ({source})\n{created_at[:16]}")
         if not rows:
-            lines.append("Hozircha xarajat yo'q.")
+            expense_lines.append("Hozircha xarajat yo'q.")
+        payments = get_object_employee_payments(client[0], obj[0])
+        incomes = get_object_incomes(client[0], obj[0])
+        if incomes:
+            lines.append("💰 OLINGAN PUL (KIRIM)")
+            for index, (created_at, currency, amount, account, note) in enumerate(incomes, 1):
+                source = "karta" if account == "card" else "naqd"
+                lines.append(f"{index}. {note or 'Pul olindi'} — +{format_money(amount, currency)} ({source})\n"
+                             f"{created_at[:16]}")
+            lines.extend(["", "💸 XARAJATLAR"])
+        lines.extend(expense_lines)
         if payments:
             lines.extend(["", "👷 XODIMLARGA BERILGAN PUL"])
             for index, (created_at, name, currency, amount, account) in enumerate(payments, 1):
                 source = "karta" if account == "card" else "naqd"
                 lines.append(f"{index}. {name} — {format_money(amount, currency)} ({source})\n{created_at[:16]}")
-        summary = "XARAJAT TURLARI BO'YICHA\n" + "\n".join(
+        summary = ""
+        if incomes:
+            summary = "OLINGAN PUL\n" + "\n".join(
+                format_money(sum(row[2] for row in incomes if row[1] == currency), currency)
+                for currency in ("UZS", "USD")
+            ) + "\n\n"
+        summary += "XARAJAT TURLARI BO'YICHA\n" + "\n".join(
             f"{category}: {format_money(amounts['UZS'], 'UZS')}, {format_money(amounts['USD'], 'USD')}"
             for category, amounts in totals.items()
         )
@@ -1416,14 +1494,21 @@ async def object_menu(update, context):
         return OBJECT_MENU
     if await reject_if_not_cashier(update):
         return OBJECT_MENU
-    if update.message.text == OBJECT_EMPLOYEES_BUTTON:
+    text = update.message.text
+    if text == OBJECT_EMPLOYEES_BUTTON:
         context.chat_data["employee_object"] = (client[0], obj[0])
         return await show_employees(update, context)
-    if update.message.text != OBJECT_EXPENSE_BUTTON:
+    if text == CLIENT_INCOME_BUTTON:
+        return await client_income_prompt(update, context, client, obj)
+    if text not in (OBJECT_EXPENSE_BUTTON, OBJECT_CARD_BUTTON):
         await update.message.reply_text("Tugmalardan birini tanlang.", reply_markup=OBJECT_KEYBOARD)
         return OBJECT_MENU
-    await update.message.reply_text(f"🏠 Obyekt: {obj[1]}\n\nXarajat turini tanlang:",
-                                   reply_markup=OBJECT_CATEGORY_KEYBOARD)
+    session.pop("object_card", None)
+    prompt = f"🏠 Obyekt: {obj[1]}\n\nXarajat turini tanlang:"
+    if text == OBJECT_CARD_BUTTON:
+        session["object_card"] = True
+        prompt += "\n💳 Kartadan to'lanadi (1% komissiya bilan)."
+    await update.message.reply_text(prompt, reply_markup=OBJECT_CATEGORY_KEYBOARD)
     return OBJECT_CATEGORY
 
 
@@ -1471,6 +1556,9 @@ async def object_amount(update, context):
         await update.message.reply_text("❌ Summani to'g'ri yozing.", reply_markup=CANCEL_KEYBOARD)
         return OBJECT_AMOUNT
     session["object_amount"] = raw
+    if session.get("object_card"):
+        # "Obyektga kartadan" tanlangan: hisob so'ralmaydi, summa kartadan ayriladi.
+        return await save_object_expense(update, context, "UZS", "card", OBJECT_AMOUNT, CANCEL_KEYBOARD)
     await update.message.reply_text("Qaysi hisobdan?", reply_markup=CLIENT_EXPENSE_KEYBOARD)
     return OBJECT_ACCOUNT
 
@@ -1478,6 +1566,15 @@ async def object_amount(update, context):
 async def object_expense_account(update, context):
     if await reject_if_not_cashier(update):
         return ConversationHandler.END
+    choices = {"💵 Naqd so'm": ("UZS", "cash"), CARD_BUTTON: ("UZS", "card"), "🇺🇸 Dollar": ("USD", "cash")}
+    if update.message.text not in choices:
+        await update.message.reply_text("Hisobni tugmalardan tanlang.", reply_markup=CLIENT_EXPENSE_KEYBOARD)
+        return OBJECT_ACCOUNT
+    currency, account = choices[update.message.text]
+    return await save_object_expense(update, context, currency, account, OBJECT_ACCOUNT, CLIENT_EXPENSE_KEYBOARD)
+
+
+async def save_object_expense(update, context, currency, account, retry_state, retry_keyboard):
     session = context.chat_data
     client = active_client(context)
     if client is None:
@@ -1486,11 +1583,6 @@ async def object_expense_account(update, context):
     category, raw = session.get("object_category"), session.get("object_amount")
     if obj is None or category not in OBJECT_CATEGORIES or raw is None:
         return await show_client(update, context, client)
-    choices = {"💵 Naqd so'm": ("UZS", "cash"), CARD_BUTTON: ("UZS", "card"), "🇺🇸 Dollar": ("USD", "cash")}
-    if update.message.text not in choices:
-        await update.message.reply_text("Hisobni tugmalardan tanlang.", reply_markup=CLIENT_EXPENSE_KEYBOARD)
-        return OBJECT_ACCOUNT
-    currency, account = choices[update.message.text]
     try:
         if currency == "UZS" and re.search(r"[.,][0-9]{1,2}$", raw):
             raise ValueError
@@ -1498,8 +1590,8 @@ async def object_expense_account(update, context):
         if account == "card" and card_total(amount) > 9223372036854775807:
             raise ValueError
     except (ValueError, InvalidOperation):
-        await update.message.reply_text("❌ Summa bu hisobga mos emas.", reply_markup=CLIENT_EXPENSE_KEYBOARD)
-        return OBJECT_ACCOUNT
+        await update.message.reply_text("❌ Summa bu hisobga mos emas.", reply_markup=retry_keyboard)
+        return retry_state
     note = f"Obyekt: {obj[1]}\n{category}"
     try:
         if account == "card":
@@ -1509,13 +1601,13 @@ async def object_expense_account(update, context):
             add_transaction("expense", currency, -amount, note, update.effective_user.id, client_id=client[0],
                             object_id=obj[0], category=category)
     except InsufficientFunds:
-        await update.message.reply_text("❌ Balansda pul yetarli emas.", reply_markup=CLIENT_EXPENSE_KEYBOARD)
-        return OBJECT_ACCOUNT
+        await update.message.reply_text("❌ Balansda pul yetarli emas.", reply_markup=retry_keyboard)
+        return retry_state
     except (sqlite3.Error, OSError, ValueError):
-        await update.message.reply_text("❌ Xarajat saqlanmadi. Qayta urinib ko'ring.", reply_markup=CLIENT_EXPENSE_KEYBOARD)
-        return OBJECT_ACCOUNT
-    session.pop("object_amount", None)
-    session.pop("object_category", None)
+        await update.message.reply_text("❌ Xarajat saqlanmadi. Qayta urinib ko'ring.", reply_markup=retry_keyboard)
+        return retry_state
+    for key in ("object_amount", "object_category", "object_card"):
+        session.pop(key, None)
     await update.message.reply_text(
         f"✅ Xarajat yozildi\n👤 Mijoz: {client[1]}\n🏠 Obyekt: {obj[1]}\n"
         f"{category}: {format_money(amount, currency)}\n"
@@ -1580,16 +1672,61 @@ async def scoped_expense_prompt(update, context, card=False):
     return CARD_EXPENSE if card else CLIENT_MENU
 
 
+def money_pair(amounts):
+    return f"{format_money(amounts['UZS'], 'UZS')}, {format_money(amounts['USD'], 'USD')}"
+
+
+def object_breakdown(rows, payments):
+    """Mijozning yozuvlarini obyektlar bo'yicha jamlaydi; obyektsiz yozuvlar oxirida."""
+    groups = {}
+    for _, kind, currency, amount, _, _, object_name in rows:
+        group = groups.setdefault(object_name, {"in": {"UZS": 0, "USD": 0}, "out": {"UZS": 0, "USD": 0},
+                                                "staff": {"UZS": 0, "USD": 0}})
+        group["in" if kind == "income" else "out"][currency] += abs(amount)
+    for _, _, object_name, currency, amount, _ in payments:
+        groups.setdefault(object_name, {"in": {"UZS": 0, "USD": 0}, "out": {"UZS": 0, "USD": 0},
+                                        "staff": {"UZS": 0, "USD": 0}})["staff"][currency] += amount
+    if not any(groups):
+        return ""
+    blocks = []
+    for name in sorted(name for name in groups if name) + ([None] if None in groups else []):
+        group = groups[name]
+        lines = [f"🏠 {name}" if name else "Obyektsiz", f"Olingan: {money_pair(group['in'])}",
+                 f"Ishlatilgan: {money_pair(group['out'])}"]
+        if any(group["staff"].values()):
+            lines.append(f"Xodimlarga: {money_pair(group['staff'])}")
+        blocks.append("\n".join(lines))
+    return "OBYEKTLAR BO'YICHA\n" + "\n\n".join(blocks)
+
+
 async def show_statement(update, context, client):
     rows, totals = get_statement(client[0])
     lines = [f"👤 MIJOZ HISOBI — {client[1]}", ""]
-    for index, (created_at, kind, currency, amount, note, account) in enumerate(rows, 1):
+    for index, (created_at, kind, currency, amount, note, account, object_name) in enumerate(rows, 1):
         sign = "+" if kind == "income" else "−"
         source = "karta" if account == "card" else "naqd"
-        lines.append(f"{index}. {note or 'Nomsiz'} — {sign}{format_money(abs(amount), currency)} ({source})\n{created_at[:16]}")
+        # Obyekt xarajatlarida obyekt nomi izohning o'zida bor; kirimga qo'shib ko'rsatamiz.
+        place = f"Obyekt: {object_name}\n" if object_name and kind == "income" else ""
+        lines.append(f"{index}. {place}{note or 'Nomsiz'} — {sign}{format_money(abs(amount), currency)} ({source})\n"
+                     f"{created_at[:16]}")
     if not rows:
         lines.append("Hozircha yozuv yo'q.")
-    await reply_report(update, "\n".join(lines), client_totals_text(totals),
+    summary = client_totals_text(totals)
+    payments = get_client_employee_payments(client[0])
+    if payments:
+        lines.extend(["", "👷 XODIMLARGA BERILGAN PUL"])
+        for index, (created_at, name, object_name, currency, amount, account) in enumerate(payments, 1):
+            source = "karta" if account == "card" else "naqd"
+            lines.append(f"{index}. {name} — 🏠 {object_name} — {format_money(amount, currency)} ({source})\n"
+                         f"{created_at[:16]}")
+        summary += "\n\nXODIMLARGA BERILGAN PUL\n" + "\n".join(
+            format_money(sum(row[4] for row in payments if row[3] == currency), currency)
+            for currency in ("UZS", "USD")
+        )
+    breakdown = object_breakdown(rows, payments)
+    if breakdown:
+        summary += "\n\n" + breakdown
+    await reply_report(update, "\n".join(lines), summary,
                        scope_keyboard(context) if is_cashier(update)
                        else client_objects_keyboard(client_view_session(update, context), False))
     return CLIENT_MENU
@@ -1611,6 +1748,7 @@ async def send_transaction_report(
     reply_markup=None,
     employee_name=None,
     object_info=None,
+    object_name=None,
 ):
     if kind not in ("income", "expense"):
         return
@@ -1622,6 +1760,8 @@ async def send_transaction_report(
     lines = [title, "", f"Hisob: {account_label}"]
     if client_name is not None:
         lines.append(f"👤 Mijoz: {client_name}")
+    if object_name is not None:
+        lines.append(f"🏠 Obyekt: {object_name}")
     if note:
         lines.append(f"📝 {note}")
     lines.extend([f"{sign} {amount_text}", f"🕐 {now_text()}"])
@@ -1731,6 +1871,7 @@ async def income_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     client = active_client(context)
     if context.chat_data.get("expense_scope") == "client" and client is None:
         return await clients_start(update, context)
+    obj = get_client_object(client[0], context.chat_data.get("object_id")) if client else None
     keyboard = scope_keyboard(context) if client else MAIN_KEYBOARD
     source = context.chat_data.get("income_source")
     text = " ".join(update.message.text.split())
@@ -1760,8 +1901,9 @@ async def income_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     default_note = "Kartaga pul olindi" if account == "card" else "Dollar olindi" if currency == "USD" else "Pul olindi"
     try:
         add_transaction("income", currency, amount, source_note or default_note,
-                        update.effective_user.id, account=account, client_id=client[0] if client else None)
-    except (sqlite3.Error, OSError) as exc:
+                        update.effective_user.id, account=account, client_id=client[0] if client else None,
+                        object_id=obj[0] if obj else None)
+    except (sqlite3.Error, OSError, ValueError) as exc:
         print("Kirimni saqlashda xato:", type(exc).__name__)
         await update.message.reply_text("❌ Kirim saqlanmadi. Qayta urinib ko'ring.", reply_markup=CANCEL_KEYBOARD)
         return INCOME_AMOUNT
@@ -1774,6 +1916,8 @@ async def income_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines = [title, ""]
     if client:
         lines.append(f"👤 Mijoz: {client[1]}")
+    if obj:
+        lines.append(f"🏠 Obyekt: {obj[1]}")
     if source_note:
         lines.append(f"👤 {source_note}")
     lines.extend([f"➕ {format_money(amount, currency)}", f"{label}: {format_money(balance, currency)}"])
@@ -1785,8 +1929,16 @@ async def income_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\n".join(lines), reply_markup=keyboard)
     await send_transaction_report(
         update, context, "income", currency, amount, account=account, note=source_note,
-        client_name=client[1] if client else None, reply_markup=keyboard
+        client_name=client[1] if client else None, reply_markup=keyboard,
+        object_name=obj[1] if obj else None
     )
+    return client_state(context, client)
+
+
+def client_state(context, client):
+    """Kirim tugagach qaysi oyna ochiq qolishi: obyekt, mijoz yoki asosiy menyu."""
+    if client is not None and get_client_object(client[0], context.chat_data.get("object_id")):
+        return OBJECT_MENU
     return CLIENT_MENU if client else ConversationHandler.END
 
 
@@ -1836,27 +1988,34 @@ async def client_split_card(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Kartaga tushgan so'mni to'g'ri kiriting.",
                                         reply_markup=CANCEL_KEYBOARD)
         return CLIENT_SPLIT_CARD
+    obj = get_client_object(client[0], context.chat_data.get("object_id"))
     try:
-        add_split_client_income(client[0], usd_cents, card_amount, update.effective_user.id)
-    except (sqlite3.Error, OSError) as exc:
+        add_split_client_income(client[0], usd_cents, card_amount, update.effective_user.id,
+                                object_id=obj[0] if obj else None)
+    except (sqlite3.Error, OSError, ValueError) as exc:
         print("Dollar va karta kirimini saqlashda xato:", type(exc).__name__)
         await update.message.reply_text("❌ Kirimlar saqlanmadi. Karta summasini qayta yuboring yoki bekor qiling.",
                                         reply_markup=CANCEL_KEYBOARD)
         return CLIENT_SPLIT_CARD
+    object_id = context.chat_data.get("object_id")
     context.chat_data.clear()
     context.chat_data.update(expense_scope="client", client_id=client[0])
+    if object_id is not None:
+        context.chat_data["object_id"] = object_id
     _, totals = get_statement(client[0])
+    place = f"🏠 Obyekt: {obj[1]}\n" if obj else ""
     await update.message.reply_text(
-        f"✅ Kirimlar qabul qilindi\n👤 Mijoz: {client[1]}\n\n"
+        f"✅ Kirimlar qabul qilindi\n👤 Mijoz: {client[1]}\n{place}\n"
         f"Dollar: +{format_usd(usd_cents)}\nKarta: +{format_uzs(card_amount)} so'm\n\n"
         f"{client_totals_text(totals)}",
         reply_markup=scope_keyboard(context)
     )
-    await send_transaction_report(update, context, "income", "USD", usd_cents,
-                                  client_name=client[1], reply_markup=scope_keyboard(context))
+    await send_transaction_report(update, context, "income", "USD", usd_cents, client_name=client[1],
+                                  reply_markup=scope_keyboard(context), object_name=obj[1] if obj else None)
     await send_transaction_report(update, context, "income", "UZS", card_amount, account="card",
-                                  client_name=client[1], reply_markup=scope_keyboard(context))
-    return CLIENT_MENU
+                                  client_name=client[1], reply_markup=scope_keyboard(context),
+                                  object_name=obj[1] if obj else None)
+    return client_state(context, client)
 
 
 # =========================================================
@@ -2019,7 +2178,7 @@ async def expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
         CLIENT_SPLIT_BUTTON, EMPLOYEES_BUTTON, ADD_EMPLOYEE_BUTTON, EMPLOYEE_PAY_BUTTON,
         EMPLOYEE_REPORT_BUTTON, EMPLOYEE_PREV, EMPLOYEE_NEXT,
         CLIENT_CARD_BUTTON, CLIENT_REPORT_BUTTON, PREV_CLIENTS_BUTTON, NEXT_CLIENTS_BUTTON,
-        ADD_OBJECT_BUTTON, OBJECT_EXPENSE_BUTTON, OBJECT_EMPLOYEES_BUTTON, OBJECT_BACK_BUTTON,
+        ADD_OBJECT_BUTTON, OBJECT_EXPENSE_BUTTON, OBJECT_CARD_BUTTON, OBJECT_EMPLOYEES_BUTTON, OBJECT_BACK_BUTTON,
         OBJECT_REPORT_BUTTON, CLIENT_BACK_BUTTON, OBJECT_PREV, OBJECT_NEXT,
         *OBJECT_CATEGORIES,
     }:
